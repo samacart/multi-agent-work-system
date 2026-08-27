@@ -1,0 +1,96 @@
+# Local-first stack for the Multi-Agent Work System.
+#   cp .env.example .env && docker compose up --build
+# Compose auto-loads .env from this directory for the ${VAR:-default} substitutions below.
+
+services:
+  postgres:
+    image: pgvector/pgvector:pg17
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+      POSTGRES_DB: ${POSTGRES_DB:-agent_work}
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres} -d ${POSTGRES_DB:-agent_work}"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--appendonly", "yes"]
+    ports:
+      - "${REDIS_PORT:-6379}:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  api:
+    build:
+      context: ./backend
+    command: ["./entrypoint.sh", "api"]
+    environment: &backend_env
+      APP_ENV: ${APP_ENV:-local}
+      DATABASE_URL: ${DATABASE_URL:-postgresql+asyncpg://postgres:postgres@postgres:5432/agent_work}
+      REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      GITHUB_TOKEN: ${GITHUB_TOKEN:-}
+      EMBEDDING_MODEL: ${EMBEDDING_MODEL:-text-embedding-3-small}
+      EMBEDDING_DIM: ${EMBEDDING_DIM:-1536}
+      DEFAULT_AGENT_MODEL: ${DEFAULT_AGENT_MODEL:-claude-sonnet}
+      AGENT_RUNTIME: ${AGENT_RUNTIME:-mock}
+      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:5173}
+      ALLOWED_SOURCE_ROOTS: ${ALLOWED_SOURCE_ROOTS:-/data/sources}
+    ports:
+      - "${API_PORT:-8000}:8000"
+    volumes:
+      # Registered local sources are mounted read-only; ingestion (Phase 2) may
+      # not read outside these roots.
+      - ${SOURCES_DIR:-./data/sources}:/data/sources:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8000/health').status==200 else 1)\""]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  worker:
+    build:
+      context: ./backend
+    command: ["./entrypoint.sh", "worker"]
+    environment: *backend_env
+    volumes:
+      - ${SOURCES_DIR:-./data/sources}:/data/sources:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      api:
+        condition: service_healthy
+
+  frontend:
+    build:
+      context: ./frontend
+    environment:
+      VITE_API_BASE_URL: ${VITE_API_BASE_URL:-http://localhost:8000}
+    ports:
+      - "${FRONTEND_PORT:-5173}:5173"
+    depends_on:
+      - api
+
+volumes:
+  postgres_data:
+  redis_data:
