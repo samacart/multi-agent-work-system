@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react'
-import { api, type Artifact, type PlanningResult, type ProjectDetail, type Topic } from '../lib/api'
+import { api, type Artifact, type PlanningResult, type ProjectDetail, type SdlcResult, type Topic } from '../lib/api'
 import ProjectPicker from './ProjectPicker'
 import { useProjects } from '../lib/useProjects'
 
@@ -80,7 +80,9 @@ function ProjectDetailView({ projectId, onChanged }: { projectId: string; onChan
   const [artifacts, setArtifacts] = useState<Artifact[]>([])
   const [openArtifact, setOpenArtifact] = useState<string | null>(null)
   const [planning, setPlanning] = useState(false)
+  const [running, setRunning] = useState(false)
   const [result, setResult] = useState<PlanningResult | null>(null)
+  const [runResult, setRunResult] = useState<SdlcResult | null>(null)
   const [error, setError] = useState<string | null>(null)
 
   const load = useCallback(async () => {
@@ -96,6 +98,7 @@ function ProjectDetailView({ projectId, onChanged }: { projectId: string; onChan
 
   useEffect(() => {
     setResult(null)
+    setRunResult(null)
     setOpenArtifact(null)
     void load()
   }, [load])
@@ -112,6 +115,21 @@ function ProjectDetailView({ projectId, onChanged }: { projectId: string; onChan
       setError(err instanceof Error ? err.message : String(err))
     } finally {
       setPlanning(false)
+    }
+  }
+
+  const runSdlc = async () => {
+    setRunning(true)
+    try {
+      const run = await api.runProject(projectId)
+      setRunResult(run)
+      setError(run.error)
+      await load()
+      onChanged()
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err))
+    } finally {
+      setRunning(false)
     }
   }
 
@@ -153,6 +171,9 @@ function ProjectDetailView({ projectId, onChanged }: { projectId: string; onChan
         <button type="submit" onClick={() => void plan()} disabled={planning}>
           {planning ? 'planning…' : detail.run_count > 0 ? 're-plan' : 'run planning'}
         </button>
+        <button type="submit" onClick={() => void runSdlc()} disabled={running || detail.run_count === 0}>
+          {running ? 'running…' : 'run SDLC loop'}
+        </button>
         <span className="muted">
           {detail.topic_name ? `Plans against topic memory: ${detail.topic_name}` : 'No topic linked — planning will have no memory to draw on'}
         </span>
@@ -164,6 +185,20 @@ function ProjectDetailView({ projectId, onChanged }: { projectId: string; onChan
           {result.tasks_created} tasks created, {result.tasks_updated} updated, {result.questions_created} questions,{' '}
           {result.approvals_created} approvals
         </p>
+      ) : null}
+
+      {runResult ? (
+        <div className="run-result">
+          <strong>{runResult.status}</strong> — {runResult.tasks_run} passes,{' '}
+          {runResult.tasks_verified} verified, {runResult.tasks_done} done, {runResult.tasks_blocked} blocked,{' '}
+          {runResult.tasks_skipped} skipped, {runResult.findings} findings ({runResult.blocking_findings} blocking),{' '}
+          {runResult.lessons_stored} lessons stored
+          <ul className="checklist">
+            {runResult.notes.map((note) => (
+              <li key={note}>{note}</li>
+            ))}
+          </ul>
+        </div>
       ) : null}
 
       <h2>Artifacts</h2>

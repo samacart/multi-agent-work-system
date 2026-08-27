@@ -200,3 +200,37 @@ async def test_failed_planning_reports_422(client, seeded, monkeypatch):
 
     detail = (await client.get(f"/projects/{seeded['project']['id']}")).json()
     assert detail["status"] == "blocked"
+
+
+async def test_running_the_sdlc_loop_over_the_api(client, seeded):
+    project_id = seeded["project"]["id"]
+    await client.post(f"/projects/{project_id}/plan")
+
+    # A pending gate holds back the roles it governs.
+    blocked = (await client.post(f"/projects/{project_id}/run")).json()
+    assert blocked["tasks_blocked"] > 0
+    assert (await client.get(f"/projects/{project_id}")).json()["status"] == "blocked"
+
+    for approval in (await client.get(f"/projects/{project_id}/approvals")).json():
+        await client.post(f"/approvals/{approval['id']}/respond", json={"status": "approved"})
+
+    result = (await client.post(f"/projects/{project_id}/run")).json()
+    assert result["tasks_blocked"] == 0
+    assert result["tasks_run"] >= 8
+    assert result["lessons_stored"] > 0
+
+    artifacts = {a["type"] for a in (await client.get(f"/projects/{project_id}/artifacts")).json()}
+    assert {"test_report", "review_report", "security_report", "release_notes", "final_summary"} <= artifacts
+
+    runs = (await client.get(f"/projects/{project_id}/runs")).json()
+    assert len(runs) > 10
+    assert all(r["status"] == "succeeded" for r in runs)
+
+    memories = (await client.get(f"/topics/{seeded['topic']['id']}/memories")).json()
+    assert any(m["metadata_json"].get("origin") == "sdlc_run" for m in memories)
+
+
+async def test_running_an_unplanned_project_returns_409(client, seeded):
+    response = await client.post(f"/projects/{seeded['project']['id']}/run")
+    assert response.status_code == 409
+    assert "Run planning first" in response.json()["detail"]

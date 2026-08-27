@@ -310,6 +310,24 @@ def _approvals(context: AgentContext) -> dict[str, Any]:
     return {"approvals": approvals}
 
 
+def _task_outcome(context: AgentContext) -> dict[str, Any]:
+    """A task pass by a role with no dedicated report.
+
+    Deliberately does not claim the work was done: this runtime cannot edit a
+    repository or run anything. It records what the task asked for and hands
+    the actual verification to QA.
+    """
+    title = str(context.extra.get("task_title") or "the task")
+    role = str(context.extra.get("task_role") or "agent")
+    criteria = [str(c) for c in context.extra.get("acceptance_criteria", [])]
+    return {
+        "summary": f"[{role}] Recorded a pass over '{title}'. The mock runtime does not execute work.",
+        "work_done": [f"Reviewed the task against {len(context.memories)} relevant memories"],
+        "follow_ups": criteria,
+        "blocked_by": ["No runtime capable of executing this work is configured (AGENT_RUNTIME=mock)"],
+    }
+
+
 def _test_report(context: AgentContext) -> dict[str, Any]:
     criteria = [str(c) for c in context.extra.get("acceptance_criteria", [])]
     return {
@@ -402,6 +420,7 @@ def _release_summary(context: AgentContext) -> dict[str, Any]:
 
 
 _GENERATORS = {
+    "task_outcome": _task_outcome,
     "domain_context": _domain_context,
     "project_brief": _project_brief,
     "architecture_plan": _architecture_plan,

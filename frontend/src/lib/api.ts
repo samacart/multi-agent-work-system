@@ -220,6 +220,23 @@ export type Decision = {
   created_at: string
 }
 
+export type SdlcResult = {
+  project_id: string
+  status: string
+  tasks_run: number
+  tasks_verified: number
+  tasks_done: number
+  tasks_blocked: number
+  tasks_skipped: number
+  runs: string[]
+  artifacts: string[]
+  findings: number
+  blocking_findings: number
+  lessons_stored: number
+  notes: string[]
+  error: string | null
+}
+
 export type PlanningResult = {
   project_id: string
   status: string
@@ -311,6 +328,7 @@ export const api = {
     }),
   planProject: (id: string) =>
     request<PlanningResult>(`/projects/${id}/plan`, { method: 'POST', okStatuses: [422] }),
+  runProject: (id: string) => request<SdlcResult>(`/projects/${id}/run`, { method: 'POST' }),
 
   tasks: (projectId: string) => request<Task[]>(`/projects/${projectId}/tasks`),
   updateTask: (taskId: string, patch: Partial<Pick<Task, 'status' | 'title' | 'description'>>) =>

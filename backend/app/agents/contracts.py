@@ -92,6 +92,19 @@ class ApprovalSet(BaseModel):
     approvals: list[ApprovalSpec] = Field(default_factory=list)
 
 
+class TaskOutcome(BaseModel):
+    """What a role reports after working a single task.
+
+    Used by roles without a dedicated report - PM, Domain Expert, Architect,
+    Developer - so every task pass leaves the same shape of trail.
+    """
+
+    summary: str
+    work_done: list[str] = Field(default_factory=list)
+    follow_ups: list[str] = Field(default_factory=list)
+    blocked_by: list[str] = Field(default_factory=list)
+
+
 class TestEvidence(BaseModel):
     criterion: str
     verdict: str = Field(default="unverified", description="met | not_met | unverified")
@@ -138,6 +151,7 @@ class ReleaseSummary(BaseModel):
 
 # Task name -> output model. The task name is what a planner asks a runtime for.
 SCHEMAS: dict[str, type[BaseModel]] = {
+    "task_outcome": TaskOutcome,
     "domain_context": DomainContext,
     "project_brief": ProjectBrief,
     "architecture_plan": ArchitecturePlan,

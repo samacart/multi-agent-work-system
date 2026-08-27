@@ -42,9 +42,20 @@ async def handle_ingest_source(job: Job) -> dict[str, Any]:
     return summary.as_dict()
 
 
+async def handle_run_project(job: Job) -> dict[str, Any]:
+    """Run the SDLC loop for one project."""
+    from app.orchestration.sdlc import run_project
+
+    project_id = uuid.UUID(str(job.payload["project_id"]))
+    async with get_sessionmaker()() as session:
+        result = await run_project(session, project_id)
+    return result.as_dict()
+
+
 HANDLERS: dict[str, Handler] = {
     "ping": handle_ping,
     "ingest_source": handle_ingest_source,
+    "run_project": handle_run_project,
 }
 
 

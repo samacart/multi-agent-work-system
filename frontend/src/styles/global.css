@@ -156,3 +156,6 @@ code { color: var(--accent); }
 
 .actions { display: flex; gap: 10px; }
 .link-bad { color: var(--bad); }
+
+.run-result { border: 1px solid var(--border); background: var(--panel); border-radius: 3px; padding: 8px 10px; margin: 8px 0; }
+.run-result .checklist { margin-top: 6px; }

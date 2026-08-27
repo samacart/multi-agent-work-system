@@ -59,8 +59,33 @@ Two different queues, both surfaced in the dashboard's **Human queue**:
   (`action_type`, `action_summary`, `risk_level`, `status`). Blocks until
   answered `approved` or `rejected`.
 
-## Enforcement status
+## Enforcement
 
-Phase 1 stores and displays these rules; nothing enforces them yet because no
-agent takes real actions. Enforcement lands with the orchestration loop in
-Phase 4, at the point where a runtime is allowed to call a tool.
+`check_gate()` in `backend/app/approvals/service.py` fails closed: anything not
+on the auto-approved list is gated, including action types nobody classified -
+a novel action is likelier to be risky than routine.
+
+The SDLC loop (`backend/app/orchestration/sdlc.py`) applies this at role
+granularity: while a project has a pending approval, the developer, architect,
+and release roles do not run. Their tasks are marked `blocked` and anything
+depending on them is skipped, with the reason recorded in the run notes and the
+final summary. Answering the gate and re-running picks up where it stopped.
+
+Per-action gating - blocking at the moment a runtime calls a specific tool -
+needs a runtime that calls tools, and arrives in Phase 6.
+
+## Verification
+
+Work is promoted by evidence, not by a pass completing:
+
+- A successful agent pass moves a task to `review`.
+- QA attaches evidence per acceptance criterion, routed back to whichever tasks
+  own that criterion.
+- A task reaches `verified` only when every one of its criteria has evidence
+  with the verdict `met`, and no blocking review or security finding is open.
+- Only then does it reach `done`, and only when every task is done does the
+  project reach `delivered`.
+
+With the mock runtime nothing can actually be executed, so evidence comes back
+`unverified` and work stalls at `review`. That is the correct outcome, and the
+run reports it rather than pretending otherwise.

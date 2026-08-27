@@ -36,6 +36,8 @@ from app.db.models import (
     Topic,
 )
 from app.db.session import get_session
+from app.orchestration.queue import enqueue
+from app.orchestration.sdlc import SdlcError, run_project
 from app.projects.planning import PlanningError, plan_project
 from app.projects.tasks import InvalidTransition, check_transition
 
@@ -114,6 +116,34 @@ async def run_planning(
     if result.status == "failed":
         # The failure is recorded on the project and its runs; report it as data.
         response.status_code = 422
+    return result.as_dict()
+
+
+@router.post("/projects/{project_id}/run")
+async def run_sdlc(
+    project_id: uuid.UUID,
+    response: Response,
+    mode: str = Query(default="sync", pattern="^(async|sync)$"),
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    """Run the SDLC loop over the project's planned tasks."""
+    await _get_project_or_404(session, project_id)
+
+    if mode == "async":
+        try:
+            job = await enqueue("run_project", {"project_id": str(project_id)})
+        except Exception as exc:  # noqa: BLE001 - Redis down is operational
+            raise HTTPException(
+                status_code=503,
+                detail=f"Job queue unavailable ({type(exc).__name__}). Retry, or use ?mode=sync.",
+            ) from exc
+        response.status_code = 202
+        return {"mode": "async", "job_id": job.id, "project_id": str(project_id)}
+
+    try:
+        result = await run_project(session, project_id)
+    except SdlcError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     return result.as_dict()
 
 

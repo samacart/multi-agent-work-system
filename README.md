@@ -7,10 +7,12 @@ Expert, Release Manager) own it through the SDLC — surfacing decisions only wh
 human judgement is actually needed, and producing real deliverables: specs,
 plans, PRs, test reports, release notes, project summaries.
 
-**Status: Phase 3 complete.** Topics can be ingested, their memory is searchable, and
+**Status: Phase 4 complete.** Topics can be ingested, their memory is searchable, and
 a project created from a topic gets planned into a brief, an architecture plan,
-tasks with acceptance criteria, queued questions, and approval gates. Everything
-runs offline by default - no API keys needed.
+tasks with acceptance criteria, queued questions, and approval gates - then run
+through the SDLC loop, producing test, review, security, and delivery reports
+and writing what it learned back to topic memory. Everything runs offline by
+default - no API keys needed.
 See [Current limitations](#current-limitations).
 
 ## Quickstart
@@ -143,8 +145,8 @@ go to `approval_requests`. See [docs/operating-model.md](docs/operating-model.md
 | 1 | Working skeleton: Compose, FastAPI, Postgres+pgvector, Redis, dashboard shell, migrations, core models, seeded agent profiles | **Done** |
 | 2 | Topic ingestion and memory search | **Done** |
 | 3 | Project planning: brief, tasks, assumptions, approvals, artifacts | **Done** |
-| 4 | SDLC agent loop: QA, review, security, release passes, lessons learned | Next |
-| 5 | GitHub integration: repo/issue/PR ingestion, PR descriptions | |
+| 4 | SDLC agent loop: QA, review, security, release passes, lessons learned | **Done** |
+| 5 | GitHub integration: repo/issue/PR ingestion, PR descriptions | Next |
 | 6 | Real agent runtime adapter: LangGraph/Deep Agents, Claude Code host adapter | |
 
 The full source-of-truth spec is [docs/implementation-brief.md](docs/implementation-brief.md).
@@ -157,9 +159,10 @@ The full source-of-truth spec is [docs/implementation-brief.md](docs/implementat
   exist; the logic arrives in Phases 2–4.
 - **No authentication on the API.** Compose binds it to localhost. Do not expose
   it to a network without adding auth.
-- **Approval gates are recorded and answerable, but nothing yet performs the
-  gated action.** `check_gate()` blocks callers and fails closed on unknown
-  actions; it starts guarding real work in Phase 4.
+- **Approval gates block roles, not individual tool calls.** While a gate is
+  pending the SDLC loop refuses to run developer, architect, or release work.
+  Per-action gating at the point a runtime calls a tool arrives with a real
+  runtime in Phase 6.
 - **Postgres-only in production.** The SQLite fallback exists for the test suite;
   pgvector search requires Postgres.
 - **`EMBEDDING_DIM` is pinned to 1536** in migration `0001`. Changing it requires

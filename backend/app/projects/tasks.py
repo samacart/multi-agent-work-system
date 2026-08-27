@@ -32,3 +32,42 @@ def check_transition(current: str, requested: str) -> None:
         return
     if requested not in ALLOWED_TRANSITIONS.get(current, set()):
         raise InvalidTransition(current, requested)
+
+
+# Tie-break order when several routes are the same length. Healthy work should
+# never be routed through `blocked` just to reach the next state.
+_ROUTE_PREFERENCE = ["ready", "in_progress", "review", "verified", "done", "backlog", "blocked"]
+
+
+def _preferred(statuses: set[str]) -> list[str]:
+    return sorted(statuses, key=lambda s: _ROUTE_PREFERENCE.index(s) if s in _ROUTE_PREFERENCE else 99)
+
+
+def path_to(current: str, target: str) -> list[str]:
+    """Shortest legal sequence of statuses from `current` to `target`.
+
+    Callers that move work several steps at once - the SDLC loop picking a task
+    up again after a previous run left it in review - should not have to know
+    which intermediate states the board requires.
+    """
+    if current == target:
+        return []
+    if target not in ALLOWED_TRANSITIONS:
+        raise InvalidTransition(current, target)
+
+    queue: list[tuple[str, list[str]]] = [(current, [])]
+    seen = {current}
+    while queue:
+        status, path = queue.pop(0)
+        for nxt in _preferred(ALLOWED_TRANSITIONS.get(status, set())):
+            if nxt in seen:
+                continue
+            # `blocked` is a destination, never a waypoint: routing healthy work
+            # through it would mark it blocked on the way past.
+            if nxt == "blocked" and nxt != target:
+                continue
+            if nxt == target:
+                return [*path, nxt]
+            seen.add(nxt)
+            queue.append((nxt, [*path, nxt]))
+    raise InvalidTransition(current, target)
