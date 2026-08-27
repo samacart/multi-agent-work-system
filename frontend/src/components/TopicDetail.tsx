@@ -8,7 +8,8 @@ import {
   type TopicDetail as TopicDetailType,
 } from '../lib/api'
 
-const SOURCE_TYPES = ['pasted_text', 'local_file', 'local_folder'] as const
+const LOCAL_SOURCE_TYPES = ['pasted_text', 'local_file', 'local_folder']
+const GITHUB_SOURCE_TYPES = ['github_repo', 'github_issue', 'github_pr']
 
 function statusClass(status: string) {
   if (status === 'ingested') return 'badge badge-ok'
@@ -30,6 +31,7 @@ export default function TopicDetail({ topicId }: { topicId: string }) {
   const [sourceText, setSourceText] = useState('')
   const [busy, setBusy] = useState(false)
 
+  const [githubEnabled, setGithubEnabled] = useState(false)
   const [query, setQuery] = useState('')
   const [hits, setHits] = useState<MemorySearchHit[] | null>(null)
   const [searching, setSearching] = useState(false)
@@ -54,6 +56,16 @@ export default function TopicDetail({ topicId }: { topicId: string }) {
     setHits(null)
     void load()
   }, [load])
+
+  useEffect(() => {
+    void api
+      .githubStatus()
+      .then((status) => setGithubEnabled(status.enabled))
+      .catch(() => setGithubEnabled(false))
+  }, [])
+
+  const sourceTypes = githubEnabled ? [...LOCAL_SOURCE_TYPES, ...GITHUB_SOURCE_TYPES] : LOCAL_SOURCE_TYPES
+  const isGithub = sourceType.startsWith('github_')
 
   // While anything is mid-ingestion, poll so the status flips without a manual refresh.
   const ingesting = sources.some((s) => s.status === 'ingesting')
@@ -141,9 +153,15 @@ export default function TopicDetail({ topicId }: { topicId: string }) {
       </div>
 
       <h2>Sources</h2>
+      {!githubEnabled ? (
+        <p className="muted">
+          GitHub sources are hidden because the integration is not configured. Set <code>GITHUB_TOKEN</code> to
+          enable repo, issue, and pull request ingestion.
+        </p>
+      ) : null}
       <form className="row-form" onSubmit={addSource}>
         <select value={sourceType} onChange={(e) => setSourceType(e.target.value)} aria-label="source type">
-          {SOURCE_TYPES.map((t) => (
+          {sourceTypes.map((t) => (
             <option key={t} value={t}>
               {t}
             </option>
@@ -167,7 +185,11 @@ export default function TopicDetail({ topicId }: { topicId: string }) {
           <input
             value={sourceUri}
             onChange={(e) => setSourceUri(e.target.value)}
-            placeholder="/data/sources/… (must be inside an allowed root)"
+            placeholder={
+              isGithub
+                ? 'https://github.com/owner/repo — or an issue / pull URL'
+                : '/data/sources/… (must be inside an allowed root)'
+            }
             aria-label="source path"
           />
         )}

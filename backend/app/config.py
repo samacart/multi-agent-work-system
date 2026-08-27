@@ -49,6 +49,12 @@ class Settings(BaseSettings):
 
     max_memories_per_source: int = 200
 
+    # GitHub. Disabled unless a token is set; writes need a second opt-in.
+    github_api_url: str = "https://api.github.com"
+    github_allow_unauthenticated: bool = False
+    github_allow_writes: bool = False
+    github_max_files: int = 200
+
     chunk_max_chars: int = 1200
     chunk_overlap_chars: int = 150
 
@@ -61,6 +67,11 @@ class Settings(BaseSettings):
     @property
     def allowed_source_root_list(self) -> list[str]:
         return [p.strip() for p in self.allowed_source_roots.split(",") if p.strip()]
+
+    @property
+    def github_enabled(self) -> bool:
+        """External integrations stay off unless explicitly configured."""
+        return bool(self.github_token) or self.github_allow_unauthenticated
 
     @property
     def ingest_extension_set(self) -> set[str]:

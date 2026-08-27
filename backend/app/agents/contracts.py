@@ -137,6 +137,17 @@ class ReviewReport(BaseModel):
     blocking: bool = False
 
 
+class PrDescription(BaseModel):
+    """Release Manager: the pull request a reviewer will actually read."""
+
+    title: str
+    summary: str
+    changes: list[str] = Field(default_factory=list)
+    testing: list[str] = Field(default_factory=list)
+    risks: list[str] = Field(default_factory=list)
+    checklist: list[str] = Field(default_factory=list)
+
+
 class ReleaseSummary(BaseModel):
     """Release Manager: what shipped and what to watch."""
 
@@ -162,6 +173,7 @@ SCHEMAS: dict[str, type[BaseModel]] = {
     "review_report": ReviewReport,
     "security_report": ReviewReport,
     "release_summary": ReleaseSummary,
+    "pr_description": PrDescription,
 }
 
 

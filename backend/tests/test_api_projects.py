@@ -234,3 +234,59 @@ async def test_running_an_unplanned_project_returns_409(client, seeded):
     response = await client.post(f"/projects/{seeded['project']['id']}/run")
     assert response.status_code == 409
     assert "Run planning first" in response.json()["detail"]
+
+
+async def test_github_status_reports_configuration_without_the_token(client):
+    response = await client.get("/github/status")
+    assert response.status_code == 200
+    body = response.json()
+    assert set(body) >= {"enabled", "authenticated", "writes_enabled", "supported_source_types"}
+    assert "token" not in response.text.lower() or "GITHUB_TOKEN" not in response.text
+
+
+async def test_planned_branch_is_exposed(client, seeded):
+    response = await client.get(f"/projects/{seeded['project']['id']}/branch")
+    assert response.status_code == 200
+    assert response.json()["branch"].startswith("agents/self-serve-onboarding-")
+
+
+async def test_pr_description_endpoint_produces_an_artifact(client, seeded):
+    project_id = seeded["project"]["id"]
+    response = await client.post(f"/projects/{project_id}/pr-description", json={"base": "develop"})
+    assert response.status_code == 200
+    body = response.json()
+    assert body["base"] == "develop"
+    assert "develop" in body["content"]
+
+    artifacts = {a["type"] for a in (await client.get(f"/projects/{project_id}/artifacts")).json()}
+    assert "pr_description" in artifacts
+
+
+async def test_opening_a_pull_request_is_gated(client, seeded):
+    from app.config import get_settings
+
+    settings = get_settings()
+    settings.github_allow_writes = True
+    try:
+        response = await client.post(
+            f"/projects/{seeded['project']['id']}/pull-request", json={"repo": "o/r"}
+        )
+        assert response.status_code == 409
+        assert response.json()["detail"]["approval_id"]
+    finally:
+        settings.github_allow_writes = False
+
+
+async def test_opening_a_pull_request_is_refused_when_writes_are_off(client, seeded):
+    response = await client.post(f"/projects/{seeded['project']['id']}/pull-request", json={"repo": "o/r"})
+    assert response.status_code == 422
+    assert "GITHUB_ALLOW_WRITES" in response.json()["detail"]
+
+
+async def test_registering_a_github_source(client, seeded):
+    response = await client.post(
+        f"/topics/{seeded['topic']['id']}/sources",
+        json={"type": "github_issue", "name": "invite bug", "uri": "https://github.com/o/r/issues/42"},
+    )
+    assert response.status_code == 201
+    assert response.json()["type"] == "github_issue"

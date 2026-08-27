@@ -113,13 +113,32 @@ async def test_unreadable_source_fails_without_raising(session, topic):
 
 
 async def test_unsupported_source_type_fails_cleanly(session, topic):
-    source = Source(topic_id=topic.id, type="github_repo", name="repo", uri="https://github.com/x/y")
+    source = Source(topic_id=topic.id, type="url", name="a page", uri="https://example.com/page")
     session.add(source)
     await session.commit()
 
     summary = await ingest_source(session, source.id)
     assert summary.status == "failed"
-    assert "Phase 5" in summary.error
+    assert "pasted_text" in summary.error
+
+
+async def test_github_source_without_configuration_fails_cleanly(session, topic):
+    """External integrations stay off unless configured, and say so."""
+    from app.config import get_settings
+
+    settings = get_settings()
+    token, unauth = settings.github_token, settings.github_allow_unauthenticated
+    settings.github_token, settings.github_allow_unauthenticated = None, False
+    try:
+        source = Source(topic_id=topic.id, type="github_repo", name="repo", uri="https://github.com/x/y")
+        session.add(source)
+        await session.commit()
+
+        summary = await ingest_source(session, source.id)
+        assert summary.status == "failed"
+        assert "GITHUB_TOKEN" in summary.error
+    finally:
+        settings.github_token, settings.github_allow_unauthenticated = token, unauth
 
 
 async def test_missing_source_raises(session):

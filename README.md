@@ -7,7 +7,7 @@ Expert, Release Manager) own it through the SDLC — surfacing decisions only wh
 human judgement is actually needed, and producing real deliverables: specs,
 plans, PRs, test reports, release notes, project summaries.
 
-**Status: Phase 4 complete.** Topics can be ingested, their memory is searchable, and
+**Status: Phase 5 complete.** Topics can be ingested, their memory is searchable, and
 a project created from a topic gets planned into a brief, an architecture plan,
 tasks with acceptance criteria, queued questions, and approval gates - then run
 through the SDLC loop, producing test, review, security, and delivery reports
@@ -52,7 +52,10 @@ from the environment only — they are never written to the database, and
 |---|---|---|
 | `DATABASE_URL` | `postgresql+asyncpg://postgres:postgres@postgres:5432/agent_work` | Must match the `POSTGRES_*` vars |
 | `REDIS_URL` | `redis://redis:6379/0` | Job queue |
-| `OPENAI_API_KEY` / `ANTHROPIC_API_KEY` / `GITHUB_TOKEN` | empty | Unused in Phase 1 |
+| `OPENAI_API_KEY` / `ANTHROPIC_API_KEY` | empty | Only needed for non-default providers |
+| `GITHUB_TOKEN` | empty | Enables GitHub ingestion. Without it the integration stays off |
+| `GITHUB_ALLOW_UNAUTHENTICATED` | `false` | Public repos only, much lower rate limit |
+| `GITHUB_ALLOW_WRITES` | `false` | Second opt-in required before a PR can be opened |
 | `EMBEDDING_MODEL` / `EMBEDDING_DIM` | `text-embedding-3-small` / `1536` | The dimension is pinned in migration `0001` |
 | `EMBEDDING_PROVIDER` | `hash` | `hash` is offline and deterministic; `openai` needs `OPENAI_API_KEY` |
 | `MEMORY_EXTRACTOR` | `heuristic` | Offline rule-based extraction |
@@ -146,8 +149,8 @@ go to `approval_requests`. See [docs/operating-model.md](docs/operating-model.md
 | 2 | Topic ingestion and memory search | **Done** |
 | 3 | Project planning: brief, tasks, assumptions, approvals, artifacts | **Done** |
 | 4 | SDLC agent loop: QA, review, security, release passes, lessons learned | **Done** |
-| 5 | GitHub integration: repo/issue/PR ingestion, PR descriptions | Next |
-| 6 | Real agent runtime adapter: LangGraph/Deep Agents, Claude Code host adapter | |
+| 5 | GitHub integration: repo/issue/PR ingestion, PR descriptions | **Done** |
+| 6 | Real agent runtime adapter: LangGraph/Deep Agents, Claude Code host adapter | Next |
 
 The full source-of-truth spec is [docs/implementation-brief.md](docs/implementation-brief.md).
 

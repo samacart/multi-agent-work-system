@@ -402,6 +402,20 @@ def _security_report(context: AgentContext) -> dict[str, Any]:
     }
 
 
+def _pr_description(context: AgentContext) -> dict[str, Any]:
+    done = [str(t) for t in context.extra.get("completed_tasks", [])]
+    outstanding = [str(t) for t in context.extra.get("outstanding_tasks", [])]
+    return {
+        "title": f"{_project_name(context)}: {_goal(context)}"[:120],
+        "summary": f"{_project_name(context)}. Goal: {_goal(context)}.",
+        "changes": [f"Completed: {t}" for t in done] or ["No tasks completed yet"],
+        "testing": ["See the project's test report artifact"],
+        "risks": _contents(context, *_RISKY, limit=5),
+        "checklist": [f"Outstanding: {t}" for t in outstanding]
+        + ["Every approval gate is resolved", "No unresolved high-severity finding"],
+    }
+
+
 def _release_summary(context: AgentContext) -> dict[str, Any]:
     done = [str(t) for t in context.extra.get("completed_tasks", [])]
     return {
@@ -431,6 +445,7 @@ _GENERATORS = {
     "review_report": _review_report,
     "security_report": _security_report,
     "release_summary": _release_summary,
+    "pr_description": _pr_description,
 }
 
 

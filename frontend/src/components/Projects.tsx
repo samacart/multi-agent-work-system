@@ -81,15 +81,22 @@ function ProjectDetailView({ projectId, onChanged }: { projectId: string; onChan
   const [openArtifact, setOpenArtifact] = useState<string | null>(null)
   const [planning, setPlanning] = useState(false)
   const [running, setRunning] = useState(false)
+  const [branch, setBranch] = useState<string | null>(null)
+  const [drafting, setDrafting] = useState(false)
   const [result, setResult] = useState<PlanningResult | null>(null)
   const [runResult, setRunResult] = useState<SdlcResult | null>(null)
   const [error, setError] = useState<string | null>(null)
 
   const load = useCallback(async () => {
     try {
-      const [d, a] = await Promise.all([api.project(projectId), api.artifacts(projectId)])
+      const [d, a, b] = await Promise.all([
+        api.project(projectId),
+        api.artifacts(projectId),
+        api.branch(projectId).catch(() => null),
+      ])
       setDetail(d)
       setArtifacts(a)
+      setBranch(b?.branch ?? null)
       setError(null)
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err))
@@ -130,6 +137,21 @@ function ProjectDetailView({ projectId, onChanged }: { projectId: string; onChan
       setError(err instanceof Error ? err.message : String(err))
     } finally {
       setRunning(false)
+    }
+  }
+
+  const draftPr = async () => {
+    setDrafting(true)
+    try {
+      const drafted = await api.prDescription(projectId)
+      setError(null)
+      await load()
+      setOpenArtifact(artifacts.find((a) => a.type === 'pr_description')?.id ?? null)
+      return drafted
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err))
+    } finally {
+      setDrafting(false)
     }
   }
 
@@ -174,6 +196,9 @@ function ProjectDetailView({ projectId, onChanged }: { projectId: string; onChan
         <button type="submit" onClick={() => void runSdlc()} disabled={running || detail.run_count === 0}>
           {running ? 'running…' : 'run SDLC loop'}
         </button>
+        <button type="submit" onClick={() => void draftPr()} disabled={drafting}>
+          {drafting ? 'drafting…' : 'draft PR description'}
+        </button>
         <span className="muted">
           {detail.topic_name ? `Plans against topic memory: ${detail.topic_name}` : 'No topic linked — planning will have no memory to draw on'}
         </span>
@@ -199,6 +224,12 @@ function ProjectDetailView({ projectId, onChanged }: { projectId: string; onChan
             ))}
           </ul>
         </div>
+      ) : null}
+
+      {branch ? (
+        <p className="muted">
+          Planned branch: <code>{branch}</code>
+        </p>
       ) : null}
 
       <h2>Artifacts</h2>

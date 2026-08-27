@@ -220,6 +220,14 @@ export type Decision = {
   created_at: string
 }
 
+export type GitHubStatus = {
+  enabled: boolean
+  authenticated: boolean
+  writes_enabled: boolean
+  api_url: string
+  supported_source_types: string[]
+}
+
 export type SdlcResult = {
   project_id: string
   status: string
@@ -329,6 +337,14 @@ export const api = {
   planProject: (id: string) =>
     request<PlanningResult>(`/projects/${id}/plan`, { method: 'POST', okStatuses: [422] }),
   runProject: (id: string) => request<SdlcResult>(`/projects/${id}/run`, { method: 'POST' }),
+
+  githubStatus: () => request<GitHubStatus>('/github/status'),
+  branch: (projectId: string) => request<{ branch: string }>(`/projects/${projectId}/branch`),
+  prDescription: (projectId: string, base = 'main') =>
+    request<{ title: string; branch: string; base: string; content: string }>(
+      `/projects/${projectId}/pr-description`,
+      { method: 'POST', body: { base } },
+    ),
 
   tasks: (projectId: string) => request<Task[]>(`/projects/${projectId}/tasks`),
   updateTask: (taskId: string, patch: Partial<Pick<Task, 'status' | 'title' | 'description'>>) =>

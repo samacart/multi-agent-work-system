@@ -50,7 +50,9 @@ class IngestionError(Exception):
     pass
 
 
-async def ingest_source(session: AsyncSession, source_id: uuid.UUID) -> IngestionSummary:
+async def ingest_source(
+    session: AsyncSession, source_id: uuid.UUID, github_client=None  # noqa: ANN001 - adapter, injected in tests
+) -> IngestionSummary:
     """Ingest one registered source. Never raises for expected failures - the
     failure is recorded on the source and returned in the summary."""
     source = await session.get(Source, source_id)
@@ -70,7 +72,9 @@ async def ingest_source(session: AsyncSession, source_id: uuid.UUID) -> Ingestio
     await session.commit()
 
     try:
-        documents = extract_documents(source.type, source.uri, source.metadata_json)
+        documents = await extract_documents(
+            source.type, source.uri, source.metadata_json, github_client=github_client
+        )
     except (SourceAccessError, UnsupportedSourceType) as exc:
         return await _fail(session, source_id, summary, str(exc))
 

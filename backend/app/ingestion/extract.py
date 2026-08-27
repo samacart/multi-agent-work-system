@@ -62,13 +62,18 @@ def _read_text_file(path: Path, max_bytes: int) -> str:
     return path.read_text(encoding="utf-8", errors="replace")
 
 
-def extract_documents(
+async def extract_documents(
     source_type: str,
     uri: str | None,
     metadata: dict | None = None,
     roots: list[str] | None = None,
+    github_client=None,  # noqa: ANN001 - injected in tests
 ) -> list[ExtractedDocument]:
-    """Turn a registered source into one or more plain-text documents."""
+    """Turn a registered source into one or more plain-text documents.
+
+    Async because remote sources are fetched over the network; local extraction
+    stays synchronous underneath.
+    """
     settings = get_settings()
     metadata = metadata or {}
 
@@ -100,8 +105,20 @@ def extract_documents(
             raise SourceAccessError(f"Not a folder: {uri}")
         return _extract_folder(root, settings)
 
-    if source_type in {"github_repo", "github_issue", "github_pr", "url"}:
-        raise UnsupportedSourceType(f"Source type {source_type!r} is not supported yet (Phase 5)")
+    if source_type in {"github_repo", "github_issue", "github_pr"}:
+        from app.github.client import GitHubError
+        from app.github.ingest import fetch_documents
+        from app.github.urls import InvalidGitHubReference
+
+        try:
+            return await fetch_documents(source_type, uri, github_client)
+        except (GitHubError, InvalidGitHubReference) as exc:
+            raise SourceAccessError(str(exc)) from exc
+
+    if source_type == "url":
+        raise UnsupportedSourceType(
+            "Source type 'url' is not supported. Paste the content as a pasted_text source instead."
+        )
 
     raise UnsupportedSourceType(f"Unknown source type {source_type!r}")
 
