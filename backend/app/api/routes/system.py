@@ -6,6 +6,7 @@ from fastapi import APIRouter, Depends
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.agents.runtime import available_runtimes
 from app.config import get_settings
 from app.db.models import (
     AgentProfile,
@@ -43,10 +44,14 @@ async def summary(session: AsyncSession = Depends(get_session)) -> dict[str, obj
 
     settings = get_settings()
     return {
-        "phase": 1,
-        "phase_name": "Working Skeleton",
+        "phase": 6,
+        "phase_name": "Runtime adapters",
         "app": settings.app_name,
         "env": settings.app_env,
         "agent_runtime": settings.agent_runtime,
+        "available_runtimes": available_runtimes(),
+        "embedding_provider": settings.embedding_provider,
+        "memory_extractor": settings.memory_extractor,
+        "github_enabled": settings.github_enabled,
         "counts": counts,
     }

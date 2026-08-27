@@ -26,6 +26,10 @@ export type SystemSummary = {
   app: string
   env: string
   agent_runtime: string
+  available_runtimes: string[]
+  embedding_provider: string
+  memory_extractor: string
+  github_enabled: boolean
   counts: Record<string, number>
 }
 

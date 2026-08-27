@@ -29,8 +29,18 @@ class Settings(BaseSettings):
     embedding_dim: int = 1536
     default_agent_model: str = "claude-sonnet"
 
-    # Which AgentRuntime implementation to use. Phase 1 ships "mock" only.
+    # Which AgentRuntime implementation to use:
+    #   mock         deterministic, offline, no provider (default)
+    #   llm          Anthropic or OpenAI, chosen by DEFAULT_AGENT_MODEL
+    #   langgraph    the llm runtime wrapped in a retrieve/generate/validate/repair graph
+    #   claude_code  shells out to the Claude Code CLI on the host
     agent_runtime: str = "mock"
+
+    # Claude Code host adapter. The CLI is not expected to exist inside the
+    # API container; run the backend on the host to use it.
+    claude_code_binary: str = "claude"
+    claude_code_cwd: str = ""
+    claude_code_timeout_seconds: int = 600
 
     # Ingestion is restricted to paths under these roots.
     allowed_source_roots: str = "/data/sources"

@@ -19,8 +19,9 @@ a duplicate.
 Each profile carries:
 
 - `system_prompt` — the role instruction, verbatim from the brief.
-- `allowed_tools_json` — intended blast radius. Advisory in Phase 1; no runtime
-  enforces it yet.
+- `allowed_tools_json` — intended blast radius. Still advisory: no runtime
+  enforces it per tool call yet. The SDLC loop gates at role granularity
+  instead, see [operating-model.md](operating-model.md).
 - `approval_rules_json` — `auto_approved` and `requires_approval` action lists,
   see [operating-model.md](operating-model.md).
 
@@ -32,3 +33,23 @@ Browse them at `GET /agent-profiles`, or in the dashboard's **Agents** tab.
 2. Add the role slug to `AGENT_ROLES` in `app/db/models.py`.
 3. Generate a migration (the slug lives in a CHECK constraint):
    `alembic revision --autogenerate -m "add <role> role"`.
+
+
+## What each role produces
+
+Every pass asks its runtime for one named structured output, defined in
+`backend/app/agents/contracts.py`:
+
+| Role | Output contract | Becomes |
+|---|---|---|
+| Domain Expert | `DomainContext` | the brief's domain section |
+| Lead PM | `ProjectBrief`, `TaskBreakdown`, `QuestionSet`, `ApprovalSet` | the brief and task breakdown artifacts, the human queue |
+| Architect | `ArchitecturePlan` | the architecture plan artifact |
+| Developer, PM, Domain Expert (task passes) | `TaskOutcome` | the agent run record |
+| QA/Test | `TestReport` | the test report artifact, plus evidence on each task |
+| Code Reviewer | `ReviewReport` | the review report artifact |
+| Security Reviewer | `ReviewReport` | the security report artifact |
+| Release Manager | `ReleaseSummary`, `PrDescription` | release notes, final summary, PR description |
+
+A reply that fails its contract produces a failed run carrying the validation
+error - it never reaches the database half-shaped.

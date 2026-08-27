@@ -37,6 +37,7 @@ async def test_system_summary_counts_rows(client, session):
     response = await client.get("/system/summary")
     assert response.status_code == 200
     body = response.json()
-    assert body["phase"] == 1
     assert body["counts"]["agent_profiles"] == len(DEFAULT_AGENT_PROFILES)
     assert body["counts"]["topics"] == 0
+    assert body["agent_runtime"] in body["available_runtimes"]
+    assert {"mock", "llm", "langgraph", "claude_code"} <= set(body["available_runtimes"])

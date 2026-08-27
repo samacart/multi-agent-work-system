@@ -9,19 +9,19 @@ Dashboard (Vite + React, :5173)
 FastAPI backend (:8000)
   |-- Topic ingestion service      app/ingestion      (done)
   |-- Memory service               app/memory         (done)
-  |-- Project planning service     app/projects       (Phase 3)
-  |-- Approval/question service    app/approvals      (Phase 3)
-  |-- Artifact service             app/artifacts      (Phase 3)
-  |-- Agent orchestration service  app/orchestration  (Phase 4)
-  |-- GitHub service               app/github         (Phase 5)
+  |-- Project planning service     app/projects       (done)
+  |-- Approval/question service    app/approvals      (done)
+  |-- Artifact service             app/artifacts       (done)
+  |-- Agent orchestration service  app/orchestration  (done)
+  |-- GitHub service               app/github         (done)
   |
   +-- Postgres 17 + pgvector   (durable state, semantic search)
   +-- Redis                    (job queue)
   +-- Worker process           (app/worker, consumes the queue)
 ```
 
-Every service package exists from Phase 1 with the tables it will need, so later
-phases add behaviour rather than schema churn.
+Every service package existed from Phase 1 with the tables it would need, so
+later phases added behaviour rather than schema churn.
 
 ## Key boundaries
 
@@ -33,11 +33,23 @@ class AgentRuntime(ABC):
     async def run(self, agent_profile, input, context) -> AgentRunResult: ...
 ```
 
-Phase 1 ships `MockAgentRuntime` only — deterministic, offline, no API keys. The
-runtime is selected by the `AGENT_RUNTIME` environment variable, so a
-LangGraph/Deep Agents runtime or a Claude Code host adapter drops in without
-touching orchestration code. Claude Code is deliberately *not* assumed to run
-inside the container: a host adapter will reach out of the container instead.
+Four implementations, selected by `AGENT_RUNTIME`:
+
+| Runtime | What it is | Needs |
+|---|---|---|
+| `mock` | Deterministic rule-based scaffolding. Composes valid outputs from the project goal and retrieved memory. No network. | nothing |
+| `llm` | Anthropic or OpenAI over HTTP, forced into the contract's JSON schema, with one repair retry. | an API key |
+| `langgraph` | The `llm` runtime inside a `prepare → generate → validate → repair` state graph with a bounded attempt count. | the `[langgraph]` extra |
+| `claude_code` | Shells out to the Claude Code CLI - the only runtime that can read a repository, edit files, and run tests. | the CLI on PATH |
+
+Claude Code is deliberately **not** assumed to run inside the container. Run the
+backend on the host to use it, or point `CLAUDE_CODE_BINARY` at a wrapper.
+
+**Structured output contracts** (`app/agents/contracts.py`). Every planning and
+review step asks a runtime for one named output and validates the reply against
+a Pydantic model. A runtime that answers in the wrong shape produces a failed
+run with the validation error attached - never a half-shaped object reaching the
+database. This is what actually makes the runtimes interchangeable.
 
 **Job queue** (`app/orchestration/queue.py`). A Redis list plus JSON payloads.
 Small on purpose — moving to arq/RQ later touches this module and the worker loop

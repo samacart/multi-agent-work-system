@@ -49,6 +49,8 @@ services:
       EMBEDDING_DIM: ${EMBEDDING_DIM:-1536}
       DEFAULT_AGENT_MODEL: ${DEFAULT_AGENT_MODEL:-claude-sonnet}
       AGENT_RUNTIME: ${AGENT_RUNTIME:-mock}
+      CLAUDE_CODE_BINARY: ${CLAUDE_CODE_BINARY:-claude}
+      CLAUDE_CODE_CWD: ${CLAUDE_CODE_CWD:-}
       CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:5173}
       ALLOWED_SOURCE_ROOTS: ${ALLOWED_SOURCE_ROOTS:-/data/sources}
     ports:

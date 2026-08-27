@@ -7,7 +7,7 @@ Expert, Release Manager) own it through the SDLC — surfacing decisions only wh
 human judgement is actually needed, and producing real deliverables: specs,
 plans, PRs, test reports, release notes, project summaries.
 
-**Status: Phase 5 complete.** Topics can be ingested, their memory is searchable, and
+**Status: all six phases complete.** Topics can be ingested, their memory is searchable, and
 a project created from a topic gets planned into a brief, an architecture plan,
 tasks with acceptance criteria, queued questions, and approval gates - then run
 through the SDLC loop, producing test, review, security, and delivery reports
@@ -60,8 +60,9 @@ from the environment only — they are never written to the database, and
 | `EMBEDDING_PROVIDER` | `hash` | `hash` is offline and deterministic; `openai` needs `OPENAI_API_KEY` |
 | `MEMORY_EXTRACTOR` | `heuristic` | Offline rule-based extraction |
 | `CHUNK_MAX_CHARS` / `CHUNK_OVERLAP_CHARS` | `1200` / `150` | Chunking |
-| `DEFAULT_AGENT_MODEL` | `claude-sonnet` | Used from Phase 6 |
-| `AGENT_RUNTIME` | `mock` | Selects the runtime adapter; `mock` is the only one shipped |
+| `DEFAULT_AGENT_MODEL` | `claude-sonnet-5` | Picks the model *and* the provider for `AGENT_RUNTIME=llm` |
+| `AGENT_RUNTIME` | `mock` | `mock`, `llm`, `langgraph`, or `claude_code` — see below |
+| `CLAUDE_CODE_BINARY` / `CLAUDE_CODE_CWD` | `claude` / empty | Only for `AGENT_RUNTIME=claude_code` |
 | `SOURCES_DIR` / `ALLOWED_SOURCE_ROOTS` | `./data/sources` / `/data/sources` | Host dir mounted read-only; ingestion may not read outside it |
 | `API_PORT` / `FRONTEND_PORT` | `8000` / `5173` | Host ports |
 
@@ -150,7 +151,7 @@ go to `approval_requests`. See [docs/operating-model.md](docs/operating-model.md
 | 3 | Project planning: brief, tasks, assumptions, approvals, artifacts | **Done** |
 | 4 | SDLC agent loop: QA, review, security, release passes, lessons learned | **Done** |
 | 5 | GitHub integration: repo/issue/PR ingestion, PR descriptions | **Done** |
-| 6 | Real agent runtime adapter: LangGraph/Deep Agents, Claude Code host adapter | Next |
+| 6 | Real agent runtime adapters: LLM, LangGraph, Claude Code host adapter | **Done** |
 
 The full source-of-truth spec is [docs/implementation-brief.md](docs/implementation-brief.md).
 

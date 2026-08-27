@@ -10,7 +10,7 @@ WORKDIR /app
 # Dev extras are included on purpose: this is a local-first system, and
 # `docker compose run --rm api ./entrypoint.sh test` should just work.
 COPY pyproject.toml README.md ./
-RUN pip install --upgrade pip && pip install ".[dev]"
+RUN pip install --upgrade pip && pip install ".[dev]"  # dev extras pull in langgraph too
 
 COPY alembic.ini ./
 COPY alembic ./alembic

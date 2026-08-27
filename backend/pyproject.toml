@@ -16,11 +16,17 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+# LangGraph is optional: only AGENT_RUNTIME=langgraph needs it, and it is a
+# large dependency tree to impose on a default install.
+langgraph = [
+    "langgraph>=0.2",
+]
 dev = [
     "pytest>=8.3",
     "pytest-asyncio>=0.24",
     "aiosqlite>=0.20",
     "httpx>=0.27",
+    "langgraph>=0.2",
 ]
 
 [build-system]

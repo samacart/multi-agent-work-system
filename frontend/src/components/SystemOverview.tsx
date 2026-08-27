@@ -20,8 +20,30 @@ export default function SystemOverview() {
         <dd>{data.env}</dd>
         <dt>Agent runtime</dt>
         <dd>
-          {data.agent_runtime}
-          {data.agent_runtime === 'mock' ? <span className="muted"> (no live model calls)</span> : null}
+          <code>{data.agent_runtime}</code>
+          {data.agent_runtime === 'mock' ? (
+            <span className="muted"> — deterministic scaffolding, no live model calls</span>
+          ) : null}
+          <span className="muted"> · available: {data.available_runtimes.join(', ')}</span>
+        </dd>
+        <dt>Embeddings</dt>
+        <dd>
+          <code>{data.embedding_provider}</code>
+          {data.embedding_provider === 'hash' ? (
+            <span className="muted"> — lexical, offline; set EMBEDDING_PROVIDER=openai for semantic</span>
+          ) : null}
+        </dd>
+        <dt>Memory extraction</dt>
+        <dd>
+          <code>{data.memory_extractor}</code>
+        </dd>
+        <dt>GitHub</dt>
+        <dd>
+          {data.github_enabled ? (
+            'configured'
+          ) : (
+            <span className="muted">off — set GITHUB_TOKEN to enable repo/issue/PR ingestion</span>
+          )}
         </dd>
       </dl>
 
