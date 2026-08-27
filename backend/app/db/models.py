@@ -181,7 +181,10 @@ class Task(Base):
     agent_role: Mapped[str | None] = mapped_column(enum_column("agent_role", AGENT_ROLES))
     status: Mapped[str] = mapped_column(enum_column("task_status", TASK_STATUSES), default="backlog", nullable=False)
     acceptance_criteria: Mapped[list] = mapped_column(JSONType, default=list, nullable=False)
+    # Verification evidence attached by QA, one entry per criterion.
     evidence: Mapped[list] = mapped_column(JSONType, default=list, nullable=False)
+    # Planning metadata: task dependencies, originating run, and so on.
+    metadata_json: Mapped[dict] = mapped_column(JSONType, default=dict, nullable=False)
     created_at: Mapped[datetime] = created_column()
     updated_at: Mapped[datetime] = updated_column()
 

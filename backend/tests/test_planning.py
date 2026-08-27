@@ -1,0 +1,239 @@
+"""Project planning end to end, on the deterministic runtime."""
+
+from __future__ import annotations
+
+import pytest
+from sqlalchemy import select
+
+from app.db.models import AgentRun, ApprovalRequest, Artifact, Decision, Memory, Project, Task, Topic
+from app.db.seed import seed_agent_profiles
+from app.memory.embeddings import get_embedding_provider
+from app.projects.planning import PlanningError, gather_context, plan_project
+
+MEMORIES = [
+    ("decision", "We decided that invite links expire after 14 days.", 0.85),
+    ("constraint", "Invites must not be reusable once an account is created.", 0.8),
+    ("risk", "Expired invites fail silently and the user sees a blank page.", 0.9),
+    ("gotcha", "The invite service caches tokens for 5 minutes after issuance.", 0.7),
+    ("architecture", "The invite service calls the billing API and writes to the invites table.", 0.7),
+    ("open_question", "Who owns the reminder email copy?", 0.7),
+    ("lesson", "The previous attempt failed because tokens were guessable.", 0.75),
+]
+
+
+@pytest.fixture
+async def planned(session):
+    await seed_agent_profiles(session)
+    topic = Topic(name="customer onboarding")
+    session.add(topic)
+    await session.commit()
+
+    provider = get_embedding_provider()
+    for type_, content, importance in MEMORIES:
+        session.add(
+            Memory(
+                topic_id=topic.id,
+                type=type_,
+                content=content,
+                importance=importance,
+                confidence=0.8,
+                embedding=await provider.embed_one(content),
+            )
+        )
+    project = Project(
+        topic_id=topic.id,
+        name="self-serve onboarding",
+        goal="let a new organisation sign up and invite teammates without support",
+    )
+    session.add(project)
+    await session.commit()
+    return project
+
+
+async def test_planning_produces_a_ready_project(session, planned):
+    result = await plan_project(session, planned.id)
+
+    assert result.status == "ready"
+    assert result.error is None
+    assert result.memories_used == len(MEMORIES)
+    await session.refresh(planned)
+    assert planned.status == "ready"
+    assert planned.brief and "# self-serve onboarding" in planned.brief
+
+
+async def test_every_pass_records_an_agent_run(session, planned):
+    result = await plan_project(session, planned.id)
+
+    runs = (await session.scalars(select(AgentRun).where(AgentRun.project_id == planned.id))).all()
+    assert len(runs) == len(result.runs) == 6
+    assert all(r.status == "succeeded" for r in runs)
+    assert all(r.started_at and r.completed_at for r in runs)
+    assert {r.input["task"] for r in runs} == {
+        "domain_context",
+        "project_brief",
+        "architecture_plan",
+        "task_breakdown",
+        "questions",
+        "approvals",
+    }
+
+
+async def test_tasks_are_created_with_acceptance_criteria(session, planned):
+    await plan_project(session, planned.id)
+
+    tasks = (await session.scalars(select(Task).where(Task.project_id == planned.id))).all()
+    assert len(tasks) >= 8
+    assert all(t.acceptance_criteria for t in tasks)
+    # The SDLC spine is covered by the right specialists.
+    assert {t.agent_role for t in tasks} >= {
+        "lead_pm",
+        "domain_expert",
+        "architect",
+        "developer",
+        "qa",
+        "code_reviewer",
+        "security_reviewer",
+        "release_manager",
+    }
+    # Only work with nothing to wait for starts ready.
+    roots = [t for t in tasks if not t.metadata_json.get("depends_on")]
+    assert roots and all(t.status == "ready" for t in roots)
+    assert all(t.status == "backlog" for t in tasks if t.metadata_json.get("depends_on"))
+
+
+async def test_high_severity_risks_become_their_own_tasks(session, planned):
+    await plan_project(session, planned.id)
+    titles = [t.title for t in (await session.scalars(select(Task))).all()]
+    assert any(title.startswith("Mitigate risk:") for title in titles)
+
+
+async def test_brief_records_assumptions_risks_and_unknowns(session, planned):
+    await plan_project(session, planned.id)
+    await session.refresh(planned)
+
+    assert "## Assumptions" in planned.brief
+    assert "## Risks" in planned.brief
+    assert "## Unknowns" in planned.brief
+    assert "expire after 14 days" in planned.brief
+    assert "Who owns the reminder email copy?" in planned.brief
+
+
+async def test_artifacts_are_persisted(session, planned):
+    await plan_project(session, planned.id)
+
+    artifacts = (await session.scalars(select(Artifact).where(Artifact.project_id == planned.id))).all()
+    assert {a.type for a in artifacts} == {"project_brief", "architecture_plan", "task_breakdown"}
+    assert all(a.content.strip() for a in artifacts)
+
+
+async def test_open_questions_reach_the_human_queue(session, planned):
+    await plan_project(session, planned.id)
+
+    decisions = (await session.scalars(select(Decision).where(Decision.project_id == planned.id))).all()
+    assert decisions
+    assert all(d.answer is None for d in decisions)
+    assert any("reminder email copy" in d.question for d in decisions)
+
+
+async def test_implied_gated_actions_are_pre_registered(session, planned):
+    await plan_project(session, planned.id)
+
+    approvals = (await session.scalars(select(ApprovalRequest).where(ApprovalRequest.project_id == planned.id))).all()
+    action_types = {a.action_type for a in approvals}
+    # Topic memory mentions tokens and a table, so both gates apply.
+    assert "modify_auth_billing_permissions_security_retention" in action_types
+    assert all(a.status == "pending" for a in approvals)
+
+
+async def test_replanning_sharpens_rather_than_duplicates(session, planned):
+    first = await plan_project(session, planned.id)
+    second = await plan_project(session, planned.id)
+
+    assert second.tasks_created == 0
+    assert second.tasks_updated == first.tasks_created
+    assert second.questions_created == 0
+    assert second.approvals_created == 0
+
+    assert len((await session.scalars(select(Task))).all()) == first.tasks_created
+    assert len((await session.scalars(select(Artifact))).all()) == 3
+    assert len((await session.scalars(select(Decision))).all()) == first.questions_created
+
+
+async def test_replanning_does_not_undo_started_work(session, planned):
+    await plan_project(session, planned.id)
+    task = (await session.scalars(select(Task).where(Task.status == "ready"))).first()
+    task.status = "in_progress"
+    await session.commit()
+
+    await plan_project(session, planned.id)
+    await session.refresh(task)
+    assert task.status == "in_progress"
+
+
+async def test_planning_without_a_topic_still_works(session):
+    await seed_agent_profiles(session)
+    project = Project(name="orphan project", goal="do a thing")
+    session.add(project)
+    await session.commit()
+
+    result = await plan_project(session, project.id)
+
+    assert result.status == "ready"
+    assert result.memories_used == 0
+    # With no memory to plan against, that itself becomes the question to ask.
+    decisions = (await session.scalars(select(Decision))).all()
+    assert any("No topic memory" in d.question for d in decisions)
+
+
+async def test_a_failing_runtime_blocks_the_project(session, planned, monkeypatch):
+    from app.agents.runtime.base import AgentRunResult, AgentRuntime
+
+    class BrokenRuntime(AgentRuntime):
+        name = "broken"
+
+        async def run(self, agent_profile, input, context=None):  # noqa: ANN001, ARG002
+            return AgentRunResult(status="failed", error="model provider unreachable")
+
+    monkeypatch.setattr("app.orchestration.runs.get_runtime", lambda: BrokenRuntime())
+    result = await plan_project(session, planned.id)
+
+    assert result.status == "failed"
+    assert "model provider unreachable" in result.error
+    await session.refresh(planned)
+    assert planned.status == "blocked"
+
+    runs = (await session.scalars(select(AgentRun))).all()
+    assert len(runs) == 1
+    assert runs[0].status == "failed"
+
+
+async def test_output_violating_the_contract_fails_the_run(session, planned, monkeypatch):
+    from app.agents.runtime.base import AgentRunResult, AgentRuntime
+
+    class SloppyRuntime(AgentRuntime):
+        name = "sloppy"
+
+        async def run(self, agent_profile, input, context=None):  # noqa: ANN001, ARG002
+            return AgentRunResult(status="succeeded", output={"not": "the right shape"})
+
+    monkeypatch.setattr("app.orchestration.runs.get_runtime", lambda: SloppyRuntime())
+    result = await plan_project(session, planned.id)
+
+    assert result.status == "failed"
+    assert "did not match the domain_context contract" in result.error
+
+
+async def test_missing_project_raises(session):
+    import uuid
+
+    with pytest.raises(PlanningError, match="not found"):
+        await plan_project(session, uuid.uuid4())
+
+
+async def test_retrieval_is_scoped_to_the_project_goal(session, planned):
+    context, memories = await gather_context(session, planned)
+
+    assert len(memories) == len(MEMORIES)
+    assert context.extra["project_name"] == "self-serve onboarding"
+    assert context.extra["topic_name"] == "customer onboarding"
+    assert all("id" in m and "type" in m for m in context.memories)

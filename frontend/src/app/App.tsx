@@ -2,8 +2,11 @@ import { useEffect, useState } from 'react'
 import StatusBar from '../components/StatusBar'
 import SystemOverview from '../components/SystemOverview'
 import AgentProfiles from '../components/AgentProfiles'
-import Placeholder from '../components/Placeholder'
 import Topics from '../components/Topics'
+import Projects from '../components/Projects'
+import TaskBoard from '../components/TaskBoard'
+import AgentRuns from '../components/AgentRuns'
+import HumanQueue from '../components/HumanQueue'
 
 type View = { id: string; label: string; render: () => JSX.Element }
 
@@ -11,55 +14,10 @@ const VIEWS: View[] = [
   { id: 'overview', label: 'Overview', render: () => <SystemOverview /> },
   { id: 'agents', label: 'Agents', render: () => <AgentProfiles /> },
   { id: 'topics', label: 'Topics', render: () => <Topics /> },
-  {
-    id: 'projects',
-    label: 'Projects',
-    render: () => (
-      <Placeholder
-        title="Projects"
-        phase="Phase 3"
-        items={[
-          'Create a project from a topic',
-          'Project brief, assumptions, risks, non-goals',
-          'Task breakdown with acceptance criteria',
-          'Artifacts',
-        ]}
-      />
-    ),
-  },
-  {
-    id: 'board',
-    label: 'Task board',
-    render: () => (
-      <Placeholder
-        title="Task board"
-        phase="Phase 3"
-        items={['backlog', 'ready', 'in progress', 'blocked', 'review', 'verified', 'done']}
-      />
-    ),
-  },
-  {
-    id: 'runs',
-    label: 'Agent runs',
-    render: () => (
-      <Placeholder
-        title="Agent runs"
-        phase="Phase 4"
-        items={['Role, input, output, status, timestamps', 'SDLC passes: PM, Architect, QA, Reviewer, Security, Release']}
-      />
-    ),
-  },
-  {
-    id: 'queue',
-    label: 'Human queue',
-    render: () => (
-      <Placeholder
-        title="Human queue"
-        phase="Phase 3"
-        items={['Open questions for a human decision', 'Approval requests with risk level', 'Recorded decisions and rationale']}
-      />
-    ),
-  },
+  { id: 'projects', label: 'Projects', render: () => <Projects /> },
+  { id: 'board', label: 'Task board', render: () => <TaskBoard /> },
+  { id: 'runs', label: 'Agent runs', render: () => <AgentRuns /> },
+  { id: 'queue', label: 'Human queue', render: () => <HumanQueue /> },
 ]
 
 function viewFromHash(): string {

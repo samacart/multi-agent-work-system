@@ -7,8 +7,10 @@ Expert, Release Manager) own it through the SDLC — surfacing decisions only wh
 human judgement is actually needed, and producing real deliverables: specs,
 plans, PRs, test reports, release notes, project summaries.
 
-**Status: Phase 2 complete.** The stack runs, topics can be ingested, and their
-memory is searchable. Everything runs offline by default - no API keys needed.
+**Status: Phase 3 complete.** Topics can be ingested, their memory is searchable, and
+a project created from a topic gets planned into a brief, an architecture plan,
+tasks with acceptance criteria, queued questions, and approval gates. Everything
+runs offline by default - no API keys needed.
 See [Current limitations](#current-limitations).
 
 ## Quickstart
@@ -140,8 +142,8 @@ go to `approval_requests`. See [docs/operating-model.md](docs/operating-model.md
 |---|---|---|
 | 1 | Working skeleton: Compose, FastAPI, Postgres+pgvector, Redis, dashboard shell, migrations, core models, seeded agent profiles | **Done** |
 | 2 | Topic ingestion and memory search | **Done** |
-| 3 | Project planning: brief, tasks, assumptions, approvals, artifacts | Next |
-| 4 | SDLC agent loop: QA, review, security, release passes, lessons learned | |
+| 3 | Project planning: brief, tasks, assumptions, approvals, artifacts | **Done** |
+| 4 | SDLC agent loop: QA, review, security, release passes, lessons learned | Next |
 | 5 | GitHub integration: repo/issue/PR ingestion, PR descriptions | |
 | 6 | Real agent runtime adapter: LangGraph/Deep Agents, Claude Code host adapter | |
 
@@ -155,8 +157,9 @@ The full source-of-truth spec is [docs/implementation-brief.md](docs/implementat
   exist; the logic arrives in Phases 2–4.
 - **No authentication on the API.** Compose binds it to localhost. Do not expose
   it to a network without adding auth.
-- **Approval rules are stored, not enforced.** Enforcement lands in Phase 4,
-  where a runtime is first allowed to call a tool.
+- **Approval gates are recorded and answerable, but nothing yet performs the
+  gated action.** `check_gate()` blocks callers and fails closed on unknown
+  actions; it starts guarding real work in Phase 4.
 - **Postgres-only in production.** The SQLite fallback exists for the test suite;
   pgvector search requires Postgres.
 - **`EMBEDDING_DIM` is pinned to 1536** in migration `0001`. Changing it requires

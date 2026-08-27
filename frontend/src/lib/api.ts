@@ -114,6 +114,125 @@ export const MEMORY_TYPES = [
   'gotcha',
 ] as const
 
+
+export type ProjectStatus =
+  | 'draft'
+  | 'planning'
+  | 'ready'
+  | 'running'
+  | 'blocked'
+  | 'review'
+  | 'delivered'
+  | 'archived'
+
+export type Project = {
+  id: string
+  topic_id: string | null
+  name: string
+  goal: string | null
+  status: ProjectStatus
+  brief: string | null
+  created_at: string
+  updated_at: string
+}
+
+export type ProjectDetail = Project & {
+  topic_name: string | null
+  task_counts: Record<string, number>
+  run_count: number
+  artifact_count: number
+  open_questions: number
+  pending_approvals: number
+}
+
+export const TASK_STATUSES = [
+  'backlog',
+  'ready',
+  'in_progress',
+  'blocked',
+  'review',
+  'verified',
+  'done',
+] as const
+
+export type TaskStatus = (typeof TASK_STATUSES)[number]
+
+export type Task = {
+  id: string
+  project_id: string
+  parent_task_id: string | null
+  title: string
+  description: string | null
+  agent_role: string | null
+  status: TaskStatus
+  acceptance_criteria: string[]
+  evidence: unknown[]
+  metadata_json: { depends_on?: string[] } & Record<string, unknown>
+  created_at: string
+  updated_at: string
+}
+
+export type AgentRun = {
+  id: string
+  project_id: string | null
+  task_id: string | null
+  agent_profile_id: string
+  status: string
+  input: { task?: string; instruction?: string; runtime?: string }
+  output: Record<string, unknown> | null
+  error: string | null
+  started_at: string | null
+  completed_at: string | null
+  created_at: string
+}
+
+export type Artifact = {
+  id: string
+  project_id: string
+  task_id: string | null
+  type: string
+  title: string
+  content: string
+  path: string | null
+  created_at: string
+}
+
+export type Approval = {
+  id: string
+  project_id: string | null
+  task_id: string | null
+  action_type: string
+  action_summary: string
+  risk_level: 'low' | 'medium' | 'high'
+  status: 'pending' | 'approved' | 'rejected' | 'cancelled'
+  response: string | null
+  created_at: string
+  updated_at: string
+}
+
+export type Decision = {
+  id: string
+  project_id: string
+  question: string
+  answer: string | null
+  rationale: string | null
+  decided_by: string | null
+  created_at: string
+}
+
+export type PlanningResult = {
+  project_id: string
+  status: string
+  memories_used: number
+  runs: string[]
+  tasks_created: number
+  tasks_updated: number
+  questions_created: number
+  approvals_created: number
+  artifacts: string[]
+  error: string | null
+}
+
 export class ApiError extends Error {
   constructor(
     message: string,
@@ -181,5 +300,36 @@ export const api = {
     request<MemorySearchResponse>('/memory/search', {
       method: 'POST',
       body: { query, topic_id: topicId ?? null, types: types?.length ? types : null, limit: 20 },
+    }),
+
+  projects: () => request<Project[]>('/projects'),
+  project: (id: string) => request<ProjectDetail>(`/projects/${id}`),
+  createProject: (name: string, goal?: string, topicId?: string) =>
+    request<Project>('/projects', {
+      method: 'POST',
+      body: { name, goal: goal || null, topic_id: topicId || null },
+    }),
+  planProject: (id: string) =>
+    request<PlanningResult>(`/projects/${id}/plan`, { method: 'POST', okStatuses: [422] }),
+
+  tasks: (projectId: string) => request<Task[]>(`/projects/${projectId}/tasks`),
+  updateTask: (taskId: string, patch: Partial<Pick<Task, 'status' | 'title' | 'description'>>) =>
+    request<Task>(`/tasks/${taskId}`, { method: 'PATCH', body: patch }),
+
+  runs: (projectId: string) => request<AgentRun[]>(`/projects/${projectId}/runs`),
+  artifacts: (projectId: string) => request<Artifact[]>(`/projects/${projectId}/artifacts`),
+
+  approvals: (projectId: string) => request<Approval[]>(`/projects/${projectId}/approvals`),
+  respondToApproval: (approvalId: string, status: string, response?: string) =>
+    request<Approval>(`/approvals/${approvalId}/respond`, {
+      method: 'POST',
+      body: { status, response: response || null },
+    }),
+
+  decisions: (projectId: string) => request<Decision[]>(`/projects/${projectId}/decisions`),
+  answerDecision: (decisionId: string, answer: string, rationale?: string) =>
+    request<Decision>(`/decisions/${decisionId}/answer`, {
+      method: 'POST',
+      body: { answer, rationale: rationale || null, decided_by: 'human' },
     }),
 }

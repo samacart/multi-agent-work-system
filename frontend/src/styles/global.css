@@ -108,3 +108,51 @@ code { color: var(--accent); }
 .badge-busy { color: var(--accent); border-color: var(--accent); }
 
 .grid td button[disabled] { color: var(--muted); cursor: default; }
+
+/* --- Phase 3: projects, board, runs, human queue --- */
+
+.artifact {
+  white-space: pre-wrap;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  padding: 10px;
+  margin: 6px 0;
+  max-height: 460px;
+  overflow: auto;
+  line-height: 1.5;
+}
+
+.badge-draft, .badge-archived { color: var(--muted); }
+.badge-planning, .badge-running, .badge-review { color: var(--accent); border-color: var(--accent); }
+.badge-ready, .badge-delivered { color: var(--ok); border-color: var(--ok); }
+.badge-blocked { color: var(--bad); border-color: var(--bad); }
+
+.board { display: flex; gap: 8px; overflow-x: auto; padding-bottom: 8px; align-items: flex-start; }
+.column { min-width: 190px; flex: 1 1 190px; }
+.column-head {
+  text-transform: uppercase;
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  color: var(--muted);
+  border-bottom: 1px solid var(--border);
+  padding-bottom: 4px;
+  margin-bottom: 6px;
+}
+.card { border: 1px solid var(--border); background: var(--panel); border-radius: 3px; padding: 7px; margin-bottom: 6px; }
+.card-title { margin-bottom: 4px; line-height: 1.35; }
+.card select {
+  margin-top: 6px;
+  width: 100%;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  color: var(--muted);
+  font: inherit;
+  font-size: 11px;
+  padding: 2px 4px;
+  border-radius: 3px;
+}
+.criteria { color: var(--muted); font-size: 11px; margin: 4px 0; padding-left: 14px; }
+.criteria li { margin: 1px 0; }
+
+.actions { display: flex; gap: 10px; }
+.link-bad { color: var(--bad); }
