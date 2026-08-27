@@ -7,9 +7,9 @@ Expert, Release Manager) own it through the SDLC — surfacing decisions only wh
 human judgement is actually needed, and producing real deliverables: specs,
 plans, PRs, test reports, release notes, project summaries.
 
-**Status: Phase 1 (Working Skeleton) complete.** The stack runs, the schema and
-agent profiles exist, and every seam later phases need is in place. No live model
-calls happen yet. See [Current limitations](#current-limitations).
+**Status: Phase 2 complete.** The stack runs, topics can be ingested, and their
+memory is searchable. Everything runs offline by default - no API keys needed.
+See [Current limitations](#current-limitations).
 
 ## Quickstart
 
@@ -50,6 +50,9 @@ from the environment only — they are never written to the database, and
 | `REDIS_URL` | `redis://redis:6379/0` | Job queue |
 | `OPENAI_API_KEY` / `ANTHROPIC_API_KEY` / `GITHUB_TOKEN` | empty | Unused in Phase 1 |
 | `EMBEDDING_MODEL` / `EMBEDDING_DIM` | `text-embedding-3-small` / `1536` | The dimension is pinned in migration `0001` |
+| `EMBEDDING_PROVIDER` | `hash` | `hash` is offline and deterministic; `openai` needs `OPENAI_API_KEY` |
+| `MEMORY_EXTRACTOR` | `heuristic` | Offline rule-based extraction |
+| `CHUNK_MAX_CHARS` / `CHUNK_OVERLAP_CHARS` | `1200` / `150` | Chunking |
 | `DEFAULT_AGENT_MODEL` | `claude-sonnet` | Used from Phase 6 |
 | `AGENT_RUNTIME` | `mock` | Selects the runtime adapter; `mock` is the only one shipped |
 | `SOURCES_DIR` / `ALLOWED_SOURCE_ROOTS` | `./data/sources` / `/data/sources` | Host dir mounted read-only; ingestion may not read outside it |
@@ -136,8 +139,8 @@ go to `approval_requests`. See [docs/operating-model.md](docs/operating-model.md
 | Phase | Scope | Status |
 |---|---|---|
 | 1 | Working skeleton: Compose, FastAPI, Postgres+pgvector, Redis, dashboard shell, migrations, core models, seeded agent profiles | **Done** |
-| 2 | Topic ingestion and memory search | Next |
-| 3 | Project planning: brief, tasks, assumptions, approvals, artifacts | |
+| 2 | Topic ingestion and memory search | **Done** |
+| 3 | Project planning: brief, tasks, assumptions, approvals, artifacts | Next |
 | 4 | SDLC agent loop: QA, review, security, release passes, lessons learned | |
 | 5 | GitHub integration: repo/issue/PR ingestion, PR descriptions | |
 | 6 | Real agent runtime adapter: LangGraph/Deep Agents, Claude Code host adapter | |

@@ -1,30 +1,16 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import StatusBar from '../components/StatusBar'
 import SystemOverview from '../components/SystemOverview'
 import AgentProfiles from '../components/AgentProfiles'
 import Placeholder from '../components/Placeholder'
+import Topics from '../components/Topics'
 
 type View = { id: string; label: string; render: () => JSX.Element }
 
 const VIEWS: View[] = [
   { id: 'overview', label: 'Overview', render: () => <SystemOverview /> },
   { id: 'agents', label: 'Agents', render: () => <AgentProfiles /> },
-  {
-    id: 'topics',
-    label: 'Topics',
-    render: () => (
-      <Placeholder
-        title="Topics"
-        phase="Phase 2"
-        items={[
-          'Create a topic',
-          'Register local file / folder / pasted text sources',
-          'Run ingestion (chunk, embed, extract memories)',
-          'Search topic memory',
-        ]}
-      />
-    ),
-  },
+  { id: 'topics', label: 'Topics', render: () => <Topics /> },
   {
     id: 'projects',
     label: 'Projects',
@@ -76,8 +62,26 @@ const VIEWS: View[] = [
   },
 ]
 
+function viewFromHash(): string {
+  const id = window.location.hash.replace(/^#/, '')
+  return VIEWS.some((v) => v.id === id) ? id : VIEWS[0].id
+}
+
 export default function App() {
-  const [active, setActive] = useState(VIEWS[0].id)
+  // The tab lives in the URL hash so a view can be linked to and reloaded into.
+  const [active, setActive] = useState(viewFromHash)
+
+  useEffect(() => {
+    const onHashChange = () => setActive(viewFromHash())
+    window.addEventListener('hashchange', onHashChange)
+    return () => window.removeEventListener('hashchange', onHashChange)
+  }, [])
+
+  const select = (id: string) => {
+    window.location.hash = id
+    setActive(id)
+  }
+
   const view = VIEWS.find((v) => v.id === active) ?? VIEWS[0]
 
   return (
@@ -94,7 +98,7 @@ export default function App() {
           <button
             key={v.id}
             className={v.id === active ? 'tab tab-active' : 'tab'}
-            onClick={() => setActive(v.id)}
+            onClick={() => select(v.id)}
           >
             {v.label}
           </button>

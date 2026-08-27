@@ -32,8 +32,25 @@ class Settings(BaseSettings):
     # Which AgentRuntime implementation to use. Phase 1 ships "mock" only.
     agent_runtime: str = "mock"
 
-    # Ingestion (Phase 2) is restricted to paths under these roots.
+    # Ingestion is restricted to paths under these roots.
     allowed_source_roots: str = "/data/sources"
+
+    # Embedding provider adapter. "hash" is deterministic and offline; "openai"
+    # requires OPENAI_API_KEY.
+    embedding_provider: str = "hash"
+
+    # Memory extraction adapter. "heuristic" is deterministic and offline.
+    memory_extractor: str = "heuristic"
+
+    # Ingestion limits. A single oversized file should not stall the worker.
+    max_source_file_bytes: int = 2_000_000
+    max_folder_files: int = 500
+    ingest_extensions: str = ".md,.txt,.rst,.py,.ts,.tsx,.js,.jsx,.json,.yaml,.yml,.toml,.sql,.sh,.html,.css,.java,.go,.rb,.rs"
+
+    max_memories_per_source: int = 200
+
+    chunk_max_chars: int = 1200
+    chunk_overlap_chars: int = 150
 
     cors_origins: str = "http://localhost:5173,http://localhost:3000"
 
@@ -44,6 +61,10 @@ class Settings(BaseSettings):
     @property
     def allowed_source_root_list(self) -> list[str]:
         return [p.strip() for p in self.allowed_source_roots.split(",") if p.strip()]
+
+    @property
+    def ingest_extension_set(self) -> set[str]:
+        return {e.strip().lower() for e in self.ingest_extensions.split(",") if e.strip()}
 
     def safe_dump(self) -> dict[str, object]:
         """Settings snapshot with every secret redacted. Safe for logs and API."""

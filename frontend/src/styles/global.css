@@ -68,3 +68,43 @@ code { color: var(--accent); }
 
 .checklist { color: var(--muted); margin: 6px 0; padding-left: 18px; }
 .checklist li { margin: 2px 0; }
+
+/* --- Phase 2: topics, sources, memory --- */
+
+.row-form { display: flex; gap: 6px; align-items: flex-start; flex-wrap: wrap; margin: 8px 0 12px; }
+.row-form input, .row-form select, .row-form textarea {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  color: var(--text);
+  font: inherit;
+  padding: 5px 8px;
+  border-radius: 3px;
+  min-width: 200px;
+}
+.row-form textarea { min-width: 380px; resize: vertical; }
+.row-form input:focus, .row-form select:focus, .row-form textarea:focus { outline: 1px solid var(--accent); }
+.row-form button[type='submit'] {
+  background: var(--panel);
+  border: 1px solid var(--accent);
+  color: var(--text);
+  font: inherit;
+  padding: 5px 12px;
+  border-radius: 3px;
+  cursor: pointer;
+}
+.row-form button[disabled] { opacity: 0.5; cursor: default; }
+
+.pill-row { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 8px; }
+.pill { background: var(--panel); border: 1px solid var(--border); color: var(--muted); padding: 4px 10px; border-radius: 12px; cursor: pointer; font: inherit; }
+.pill:hover { color: var(--text); }
+.pill-active { color: var(--text); border-color: var(--accent); }
+
+.detail { border-top: 1px solid var(--border); margin-top: 14px; padding-top: 10px; }
+.detail h3 { font-size: 14px; margin: 6px 0 10px; font-weight: normal; }
+
+.badge { border: 1px solid var(--border); border-radius: 3px; padding: 1px 6px; color: var(--muted); font-size: 11px; }
+.badge-ok { color: var(--ok); border-color: var(--ok); }
+.badge-bad { color: var(--bad); border-color: var(--bad); }
+.badge-busy { color: var(--accent); border-color: var(--accent); }
+
+.grid td button[disabled] { color: var(--muted); cursor: default; }

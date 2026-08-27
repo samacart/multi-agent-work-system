@@ -32,13 +32,41 @@ back to a source.
 
 ## Retrieval
 
-Retrieval (Phase 2) combines:
+`search_memories()` in `backend/app/memory/search.py` blends six signals with
+fixed weights that sum to 1.0:
 
-- semantic similarity (pgvector cosine distance on `embedding`)
-- recency (`created_at` / `updated_at`)
-- importance (`importance`)
-- source reliability (`sources.metadata_json`)
-- topic/project match
+| Signal | Weight | Source |
+|---|---|---|
+| similarity | 0.55 | cosine distance on `embedding`, mapped from -1..1 to 0..1 |
+| importance | 0.15 | `memories.importance` |
+| confidence | 0.10 | `memories.confidence` |
+| recency | 0.10 | exponential decay, 45-day half-life |
+| reliability | 0.05 | per-source-type default, or `sources.metadata_json["reliability"]` |
+| scope | 0.05 | topic and project match |
+
+Similarity alone surfaces things that merely *sound* relevant; the other five
+are what let a recent explicit decision beat an old low-confidence aside.
+
+On Postgres the candidate set comes from a pgvector nearest-neighbour query
+(`embedding <=> :query`, backed by the HNSW indexes in migration `0002`), then
+gets re-ranked in Python with the full formula. Elsewhere - the SQLite test
+suite - candidates are loaded and scored directly.
+
+Every hit returns its component breakdown, so a surprising ranking can be
+explained rather than guessed at.
+
+## Extraction
+
+`MemoryExtractor` (`backend/app/memory/extraction.py`) is an adapter, same shape
+as the agent runtime. The default `heuristic` extractor is deterministic and
+offline: it splits text into sentences, drops code and table noise, and matches
+ordered phrasing rules - most specific first, so "we decided the service must
+..." is recorded as a `decision` rather than a `constraint`. Sentences carrying
+a number, date, or version get a confidence and importance bump, because they
+are concrete and checkable.
+
+It is tuned for precision. A memory store full of restated prose is worse than
+a small one, since every later retrieval pays for the noise.
 
 Embeddings are `VECTOR(1536)` — `text-embedding-3-small`, set by
 `EMBEDDING_MODEL` / `EMBEDDING_DIM`. The dimension is pinned in migration

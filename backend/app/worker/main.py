@@ -1,8 +1,7 @@
 """Background worker.
 
-Phase 1 the worker exists to prove the queue and database wiring works end to
-end. It consumes jobs, dispatches on job type, and logs. Handlers for ingestion
-(Phase 2) and agent runs (Phase 4) register into HANDLERS.
+Consumes jobs from Redis and dispatches on job type. Handlers register into
+HANDLERS; one bad job is logged and dropped rather than killing the loop.
 """
 
 from __future__ import annotations
@@ -10,6 +9,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import signal
+import uuid
 from collections.abc import Awaitable, Callable
 from typing import Any
 
@@ -32,8 +32,19 @@ async def handle_ping(job: Job) -> dict[str, Any]:
     return {"pong": True, "db": value, "echo": job.payload}
 
 
+async def handle_ingest_source(job: Job) -> dict[str, Any]:
+    """Run the ingestion pipeline for one registered source."""
+    from app.ingestion.service import ingest_source
+
+    source_id = uuid.UUID(str(job.payload["source_id"]))
+    async with get_sessionmaker()() as session:
+        summary = await ingest_source(session, source_id)
+    return summary.as_dict()
+
+
 HANDLERS: dict[str, Handler] = {
     "ping": handle_ping,
+    "ingest_source": handle_ingest_source,
 }
 
 
