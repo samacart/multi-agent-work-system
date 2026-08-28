@@ -159,3 +159,83 @@ code { color: var(--accent); }
 
 .run-result { border: 1px solid var(--border); background: var(--panel); border-radius: 3px; padding: 8px 10px; margin: 8px 0; }
 .run-result .checklist { margin-top: 6px; }
+
+/* --- rendered markdown: briefs, plans, reports --- */
+
+.md {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 20px 24px;
+  margin: 8px 0;
+  max-height: 620px;
+  overflow: auto;
+  /* Prose, not terminal output: a proportional face is far easier to read at
+     length than the monospace the rest of the dashboard uses. */
+  font-family: ui-sans-serif, -apple-system, "Segoe UI", Helvetica, Arial, sans-serif;
+  font-size: 13.5px;
+  line-height: 1.65;
+  color: var(--text);
+}
+
+.md > :first-child { margin-top: 0; }
+.md > :last-child { margin-bottom: 0; }
+
+.md h1 { font-size: 19px; margin: 26px 0 10px; font-weight: 600; letter-spacing: -0.01em; }
+.md h2 {
+  font-size: 15px;
+  margin: 24px 0 8px;
+  font-weight: 600;
+  text-transform: none;
+  letter-spacing: 0;
+  color: var(--text);
+  border-bottom: 1px solid var(--border);
+  padding-bottom: 5px;
+}
+.md h3 { font-size: 13.5px; margin: 18px 0 6px; font-weight: 600; color: var(--accent); }
+.md h4 { font-size: 13px; margin: 14px 0 4px; font-weight: 600; color: var(--muted); }
+
+.md p { margin: 0 0 12px; }
+.md ul, .md ol { margin: 0 0 12px; padding-left: 22px; }
+.md li { margin: 3px 0; }
+.md li > p { margin: 0 0 4px; }
+
+.md strong { font-weight: 600; color: #fff; }
+.md em { color: var(--muted); }
+
+.md code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  padding: 1px 5px;
+  color: var(--accent);
+}
+.md pre {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 12px 14px;
+  overflow-x: auto;
+  margin: 0 0 12px;
+}
+.md pre code { background: none; border: none; padding: 0; color: var(--text); font-size: 12px; }
+
+.md blockquote {
+  margin: 0 0 12px;
+  padding: 2px 0 2px 14px;
+  border-left: 2px solid var(--accent);
+  color: var(--muted);
+}
+
+.md-table-wrap { overflow-x: auto; margin: 0 0 14px; }
+.md table { border-collapse: collapse; width: 100%; font-size: 12.5px; }
+.md th, .md td { text-align: left; padding: 6px 10px; border: 1px solid var(--border); vertical-align: top; }
+.md th { background: var(--bg); font-weight: 600; color: var(--muted); }
+
+.md hr { border: none; border-top: 1px solid var(--border); margin: 20px 0; }
+
+/* Task-list checkboxes appear throughout the task breakdown and PR checklists. */
+.md input[type='checkbox'] { margin-right: 7px; accent-color: var(--accent); }
+.md li:has(> input[type='checkbox']) { list-style: none; margin-left: -18px; }

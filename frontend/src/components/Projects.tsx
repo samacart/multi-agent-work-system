@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
 import { api, type Artifact, type PlanningResult, type ProjectDetail, type SdlcResult, type Topic } from '../lib/api'
+import Markdown from './Markdown'
 import ProjectPicker from './ProjectPicker'
 import { useProjects } from '../lib/useProjects'
 
@@ -249,7 +250,7 @@ function ProjectDetailView({ projectId, onChanged }: { projectId: string; onChan
             ))}
           </div>
           {openArtifact ? (
-            <pre className="artifact">{artifacts.find((a) => a.id === openArtifact)?.content}</pre>
+            <Markdown>{artifacts.find((a) => a.id === openArtifact)?.content ?? ''}</Markdown>
           ) : null}
         </div>
       )}
@@ -257,7 +258,7 @@ function ProjectDetailView({ projectId, onChanged }: { projectId: string; onChan
       {detail.brief ? (
         <>
           <h2>Brief</h2>
-          <pre className="artifact">{detail.brief}</pre>
+          <Markdown>{detail.brief}</Markdown>
         </>
       ) : null}
     </div>
