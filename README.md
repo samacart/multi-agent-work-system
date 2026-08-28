@@ -154,6 +154,8 @@ go to `approval_requests`. See [docs/operating-model.md](docs/operating-model.md
 | 6 | Real agent runtime adapters: LLM, LangGraph, Claude Code host adapter | **Done** |
 
 The full source-of-truth spec is [docs/implementation-brief.md](docs/implementation-brief.md).
+The API reference is [docs/api.md](docs/api.md), and [docs/design-brief.md](docs/design-brief.md)
+is the handoff for redesigning the dashboard.
 
 ## Current limitations
 
