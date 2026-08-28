@@ -92,7 +92,9 @@ def _project_brief(context: AgentContext) -> dict[str, Any]:
         ],
         # Decisions and constraints already recorded are treated as given, and
         # listed so a human can contradict them cheaply.
-        "assumptions": [f"Still true: {c}" for c in _contents(context, *_CONSTRAINING, limit=6)]
+        # A human answer outranks anything inferred from memory.
+        "assumptions": [f"Decided: {d}" for d in context.extra.get("decisions_made_by_the_human", [])]
+        + [f"Still true: {c}" for c in _contents(context, *_CONSTRAINING, limit=6)]
         or ["No recorded decisions or constraints; scope is assumed to be greenfield"],
         "unknowns": _contents(context, "open_question", limit=6) or ["No open questions recorded in topic memory"],
         "risks": risks,
@@ -238,6 +240,9 @@ def _task_breakdown(context: AgentContext) -> dict[str, Any]:
 
 def _questions(context: AgentContext) -> dict[str, Any]:
     """Only ask about things a stated assumption cannot safely cover."""
+    already_answered = {
+        str(d).split(" -> ")[0].strip() for d in context.extra.get("decisions_made_by_the_human", [])
+    }
     questions = [
         {
             "question": content if content.endswith("?") else f"{content} - what is the answer?",
@@ -246,6 +251,7 @@ def _questions(context: AgentContext) -> dict[str, Any]:
             "recommendation": None,
         }
         for content in _contents(context, "open_question", limit=5)
+        if content not in already_answered
     ]
 
     for memory in _memories(context, *_RISKY):

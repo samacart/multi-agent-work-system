@@ -23,7 +23,7 @@ from app.agents.contracts import ArchitecturePlan, DomainContext, ProjectBrief, 
 from app.agents.runtime.base import AgentContext
 from app.approvals.service import record_question, request_approval
 from app.artifacts.service import bullets, upsert_artifact
-from app.db.models import AGENT_ROLES, Memory, Project, Task, Topic
+from app.db.models import AGENT_ROLES, Decision, Memory, Project, Task, Topic
 from app.memory.search import search_memories
 from app.orchestration.runs import AgentRunFailed, execute_run
 
@@ -80,6 +80,20 @@ async def gather_context(
         hits = await search_memories(session, query=query, topic_id=project.topic_id, limit=limit)
         memories = [hit.memory for hit in hits]
 
+    # Decisions a human has already made are the highest-authority context
+    # there is: the whole point of asking was to act on the answer. Without
+    # this, a project re-planned after its questions were answered plans as
+    # though they never were.
+    decisions = list(
+        (
+            await session.scalars(
+                select(Decision).where(Decision.project_id == project.id).order_by(Decision.created_at)
+            )
+        ).all()
+    )
+    answered = [f"{d.question} -> {d.answer}" for d in decisions if d.answer]
+    unanswered = [d.question for d in decisions if not d.answer]
+
     context = AgentContext(
         project_id=str(project.id),
         memories=[
@@ -96,6 +110,8 @@ async def gather_context(
             "project_name": project.name,
             "goal": project.goal or "",
             "topic_name": topic.name if topic else "",
+            "decisions_made_by_the_human": answered,
+            "questions_still_open": unanswered,
         },
     )
     return context, memories

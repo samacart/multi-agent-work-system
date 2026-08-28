@@ -237,3 +237,54 @@ async def test_retrieval_is_scoped_to_the_project_goal(session, planned):
     assert context.extra["project_name"] == "self-serve onboarding"
     assert context.extra["topic_name"] == "customer onboarding"
     assert all("id" in m and "type" in m for m in context.memories)
+
+
+async def test_answers_a_human_gave_reach_the_agents(session, planned):
+    """The point of asking is to act on the answer. Without this, a project
+    re-planned after its questions were answered plans as though they were not."""
+    from app.approvals.service import answer_question, record_question
+    from app.projects.planning import gather_context
+
+    decision = await record_question(session, planned.id, "Should invites be org-scoped?", "affects billing")
+    await answer_question(session, decision.id, "Yes, org-scoped", decided_by="sam")
+    await record_question(session, planned.id, "What about SSO?", "may change auth")
+
+    context, _memories = await gather_context(session, planned)
+
+    assert context.extra["decisions_made_by_the_human"] == ["Should invites be org-scoped? -> Yes, org-scoped"]
+    assert context.extra["questions_still_open"] == ["What about SSO?"]
+
+
+async def test_a_human_answer_becomes_a_stated_assumption(session, planned):
+    from sqlalchemy import select as sa_select
+
+    from app.approvals.service import answer_question
+    from app.db.models import Artifact, Decision
+
+    await plan_project(session, planned.id)
+    decision = (await session.scalars(sa_select(Decision))).first()
+    await answer_question(session, decision.id, "The growth team owns it", decided_by="sam")
+
+    await plan_project(session, planned.id)
+
+    brief = (
+        await session.scalars(sa_select(Artifact).where(Artifact.type == "project_brief"))
+    ).one()
+    assert "The growth team owns it" in brief.content
+
+
+async def test_an_answered_question_is_not_asked_again(session, planned):
+    from sqlalchemy import select as sa_select
+
+    from app.approvals.service import answer_question
+    from app.db.models import Decision
+
+    await plan_project(session, planned.id)
+    decisions = (await session.scalars(sa_select(Decision))).all()
+    for decision in decisions:
+        await answer_question(session, decision.id, "settled", decided_by="sam")
+
+    await plan_project(session, planned.id)
+
+    reopened = [d for d in (await session.scalars(sa_select(Decision))).all() if not d.answer]
+    assert reopened == []
