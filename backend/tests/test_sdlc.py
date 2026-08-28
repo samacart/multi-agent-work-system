@@ -406,3 +406,66 @@ async def test_concurrency_respects_the_configured_limit(session, project, monke
         runs_module.get_runtime = original
 
     assert peak <= 2
+
+
+async def test_a_transient_failure_is_retried_before_blocking(session, project, monkeypatch):
+    """One timeout blocked a task and cascaded to six skipped dependents on a
+    real run. A pass that fails once is usually transient."""
+    from app.agents.runtime.base import AgentRunResult, AgentRuntime
+    from app.agents.runtime.mock import MockAgentRuntime
+    from app.config import get_settings
+
+    await _clear_approvals(session, project)
+    monkeypatch.setattr(get_settings(), "sdlc_task_retries", 1)
+
+    failed_once: set[str] = set()
+
+    class FlakyOnce(AgentRuntime):
+        name = "flaky-once"
+
+        async def run(self, agent_profile, input, context=None):  # noqa: ANN001
+            key = str(input.get("instruction", ""))[:40]
+            if key not in failed_once:
+                failed_once.add(key)
+                return AgentRunResult(status="failed", error="Claude Code timed out after 900s")
+            return await MockAgentRuntime().run(agent_profile, input, context)
+
+    import app.orchestration.runs as runs_module
+
+    original = runs_module.get_runtime
+    runs_module.get_runtime = lambda: FlakyOnce()
+    try:
+        result = await run_project(session, project.id)
+    finally:
+        runs_module.get_runtime = original
+
+    # Every task failed its first attempt and succeeded on the retry.
+    assert result.tasks_blocked == 0
+    assert result.tasks_skipped == 0
+    assert result.tasks_run >= 8
+
+
+async def test_a_persistent_failure_still_blocks_and_says_how_many_tries(session, project, monkeypatch):
+    from app.agents.runtime.base import AgentRunResult, AgentRuntime
+    from app.config import get_settings
+
+    await _clear_approvals(session, project)
+    monkeypatch.setattr(get_settings(), "sdlc_task_retries", 2)
+
+    class AlwaysFails(AgentRuntime):
+        name = "always-fails"
+
+        async def run(self, agent_profile, input, context=None):  # noqa: ANN001, ARG002
+            return AgentRunResult(status="failed", error="provider unreachable")
+
+    import app.orchestration.runs as runs_module
+
+    original = runs_module.get_runtime
+    runs_module.get_runtime = lambda: AlwaysFails()
+    try:
+        result = await run_project(session, project.id)
+    finally:
+        runs_module.get_runtime = original
+
+    assert result.tasks_blocked > 0
+    assert any("after 3 attempt(s)" in note for note in result.notes)

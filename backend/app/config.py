@@ -40,7 +40,9 @@ class Settings(BaseSettings):
     # API container; run the backend on the host to use it.
     claude_code_binary: str = "claude"
     claude_code_cwd: str = ""
-    claude_code_timeout_seconds: int = 600
+    # Deep analytical passes over a large repository run long; 600s timed out
+    # mid-run on a real project and cascaded to six skipped dependents.
+    claude_code_timeout_seconds: int = 1800
     # Claude Code has real filesystem and shell access, and in headless `-p`
     # mode it edits without prompting. Read-only by default: an agent asked to
     # produce a plan or a review has no business changing the repository it is
@@ -51,6 +53,9 @@ class Settings(BaseSettings):
     # is a whole agent invocation, so this is the difference between a run
     # taking ten minutes and taking fifty.
     sdlc_max_parallel_tasks: int = 3
+    # Retry a failed pass before blocking it. A timeout is usually transient,
+    # and blocking on the first one takes every dependent task down with it.
+    sdlc_task_retries: int = 1
     # Reuse Claude Code sessions across passes so the repository is not
     # re-explored from cold each time. Off by default: the benefit is real but
     # unmeasured, and a reused session carries prior context into a later pass.

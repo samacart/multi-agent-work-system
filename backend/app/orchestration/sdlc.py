@@ -344,20 +344,35 @@ async def _run_task_isolated(
         _advance(task, "in_progress")
         await session.commit()
 
-        try:
-            outcome = await execute_run(
-                session,
-                role=role,
-                task=agent_task,
-                instruction=f"{task.title}. {task.description or ''}".strip(),
-                context=context,
-                project_id=project_id,
-                task_id=task_id,
-            )
-        except AgentRunFailed as exc:
+        # A pass that fails is usually transient - a timeout on a long read -
+        # and blocking on the first failure takes every dependent task with it.
+        attempts = max(1, get_settings().sdlc_task_retries + 1)
+        outcome = None
+        last_error = ""
+        for attempt in range(1, attempts + 1):
+            try:
+                outcome = await execute_run(
+                    session,
+                    role=role,
+                    task=agent_task,
+                    instruction=f"{task.title}. {task.description or ''}".strip(),
+                    context=context,
+                    project_id=project_id,
+                    task_id=task_id,
+                )
+                break
+            except AgentRunFailed as exc:
+                last_error = str(exc)
+                log.warning(
+                    "task pass '%s' failed on attempt %d of %d: %s", task.title, attempt, attempts, exc
+                )
+
+        if outcome is None:
             _advance(task, "blocked")
             await session.commit()
-            return _TaskOutcome(agent_task=agent_task, error=str(exc))
+            return _TaskOutcome(
+                agent_task=agent_task, error=f"{last_error} (after {attempts} attempt(s))"
+            )
 
         artifact_type = TASK_ARTIFACTS.get(agent_task)
         if artifact_type:
