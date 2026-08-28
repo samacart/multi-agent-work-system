@@ -184,3 +184,56 @@ async def test_embedding_failure_marks_the_source_failed(session, pasted_source,
     assert "Embedding failed" in summary.error
     assert (await session.scalars(select(SourceChunk))).all() == []
     assert embeddings  # imported for clarity about what was swapped
+
+
+async def test_the_memory_cap_applies_across_the_whole_source(session, topic, tmp_path, monkeypatch):
+    """A folder source was silently allowed the cap once per document."""
+    from app.config import get_settings
+
+    root = tmp_path / "sources"
+    root.mkdir()
+    for n in range(4):
+        (root / f"doc{n}.md").write_text(
+            "\n".join(f"We decided that rule number {n}{i} applies to onboarding invites." for i in range(10))
+        )
+    settings = get_settings()
+    monkeypatch.setattr(settings, "allowed_source_roots", str(root))
+    monkeypatch.setattr(settings, "max_memories_per_source", 5)
+
+    source = Source(topic_id=topic.id, type="local_folder", name="docs", uri=str(root))
+    session.add(source)
+    await session.commit()
+
+    summary = await ingest_source(session, source.id)
+
+    assert summary.documents == 4
+    assert summary.memories_created == 5
+    assert any("MAX_MEMORIES_PER_SOURCE" in note for note in summary.notes)
+
+
+async def test_the_cap_does_not_let_one_type_crowd_out_the_rest(session, topic, tmp_path, monkeypatch):
+    """Ranking purely by importance starved open questions - exactly what a
+    planner needs - because constraints score higher and are far more numerous."""
+    from app.config import get_settings
+
+    root = tmp_path / "sources"
+    root.mkdir()
+    (root / "loud.md").write_text(
+        "\n".join(f"The service must never reuse invite token number {i} once accepted." for i in range(40))
+    )
+    (root / "quiet.md").write_text(
+        "\n".join(f"Who owns the reminder email copy for template number {i}?" for i in range(5))
+    )
+    settings = get_settings()
+    monkeypatch.setattr(settings, "allowed_source_roots", str(root))
+    monkeypatch.setattr(settings, "max_memories_per_source", 10)
+
+    source = Source(topic_id=topic.id, type="local_folder", name="docs", uri=str(root))
+    session.add(source)
+    await session.commit()
+
+    summary = await ingest_source(session, source.id)
+
+    assert summary.memories_created == 10
+    assert summary.memory_types.get("open_question", 0) > 0
+    assert summary.memory_types.get("constraint", 0) > 0

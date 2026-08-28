@@ -17,6 +17,19 @@ from app.config import get_settings
 _SENTENCE_SPLIT_RE = re.compile(r"(?<=[.!?])\s+|\n")
 _WHITESPACE_RE = re.compile(r"\s+")
 _CODEISH_RE = re.compile(r"[{};=<>|]{2,}|^\s*(def |class |import |from |function |const |let |var )")
+# A markdown table row: starts with a pipe, or carries two or more cell
+# separators. Table cells read as prose to the rules below but carry none of
+# the meaning, and a documentation-heavy corpus is mostly tables.
+_TABLE_ROW_RE = re.compile(r"^\s*\|| \| .* \| ")
+# A sentence that begins mid-clause is a fragment left by chunk splitting.
+_FRAGMENT_START_RE = re.compile(r"^[a-z0-9]")
+# ...and one that *ends* on a word that cannot end a sentence is truncated.
+_TRUNCATED_END_RE = re.compile(
+    r"\b(?:a|an|the|and|or|but|of|to|in|on|for|with|that|which|is|was|are|were|be|been|"
+    r"can|can't|cannot|will|would|should|must|may|might|as|at|by|from|into|than|then)\s*[\-\u2014,]*\s*$",
+    re.IGNORECASE,
+)
+MIN_SENTENCE_WORDS = 5
 
 MIN_SENTENCE_CHARS = 25
 MAX_SENTENCE_CHARS = 400
@@ -138,9 +151,12 @@ RULES: tuple[Rule, ...] = (
     Rule(
         "architecture",
         (
-            r"\b(?:service|microservice|endpoint|api|schema|database|table|queue|worker|cache)\b",
-            r"\bdeployed\b|\bdeployment\b",
-            r"\bmigration\b",
+            # A bare noun ("api", "table") matches nearly every sentence in a
+            # technical spec. Require a structural relationship, not a mention.
+            r"\b(?:service|microservice|endpoint|api|schema|database|table|queue|worker|cache|module|component)\b"
+            r"[^.]{0,60}?\b(?:calls|writes to|reads from|talks to|depends on|is backed by|exposes|consumes|"
+            r"publishes|subscribes to|stores|persists|owns|returns|proxies|wraps)\b",
+            r"\b(?:runs on|is deployed to|is backed by|is stored in|lives in|sits behind|sits in front of)\b",
             r"\barchitecture\b",
             r"\bintegrat(?:es|ion) with\b",
         ),
@@ -225,19 +241,24 @@ class HeuristicMemoryExtractor(MemoryExtractor):
                 )
             )
 
-        # Keep the strongest signals when a source is very chatty.
-        limit = get_settings().max_memories_per_source
+        # Strongest signals first. The per-source cap is applied by the caller,
+        # which is the only place that sees all of a source's documents.
         out.sort(key=lambda m: (m.importance, m.confidence), reverse=True)
-        return out[:limit]
+        return out
 
 
 def _is_candidate(sentence: str) -> bool:
     if not (MIN_SENTENCE_CHARS <= len(sentence) <= MAX_SENTENCE_CHARS):
         return False
-    if _CODEISH_RE.search(sentence):
+    if _CODEISH_RE.search(sentence) or _TABLE_ROW_RE.search(sentence):
+        return False
+    if _FRAGMENT_START_RE.match(sentence) or _TRUNCATED_END_RE.search(sentence):
+        # Begins or ends mid-clause: wreckage from a split, not a claim.
+        return False
+    if len(sentence.split()) < MIN_SENTENCE_WORDS:
         return False
     letters = sum(c.isalpha() for c in sentence)
-    # Reject tables, separators, and other punctuation soup.
+    # Reject separators and other punctuation soup.
     return letters >= len(sentence) * 0.5
 
 

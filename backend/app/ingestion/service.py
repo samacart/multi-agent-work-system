@@ -135,6 +135,15 @@ async def ingest_source(
             )
         )
 
+    # Cap across the whole source, not per document: a folder of 38 files was
+    # silently allowed 38x the configured limit.
+    if len(extracted) > settings.max_memories_per_source:
+        summary.notes.append(
+            f"Kept the {settings.max_memories_per_source} strongest of {len(extracted)} extracted memories "
+            f"(MAX_MEMORIES_PER_SOURCE)"
+        )
+        extracted = _cap_evenly(extracted, settings.max_memories_per_source)
+
     if extracted:
         # Deduplicate against what the topic already knows, not just this source:
         # the same decision written in two places should be one memory.
@@ -183,6 +192,28 @@ async def ingest_source(
         "ingested source %s: %d chunks, %d memories", source.name, summary.chunks_created, summary.memories_created
     )
     return summary
+
+
+def _cap_evenly(memories: list, limit: int) -> list:
+    """Take the strongest, round-robin across types.
+
+    Ranking purely by importance lets one loud type take the whole budget -
+    a technical corpus is full of constraints, and open questions (exactly what
+    a planner needs) score lower and vanish entirely.
+    """
+    by_type: dict[str, list] = {}
+    for memory in sorted(memories, key=lambda m: (m.importance, m.confidence), reverse=True):
+        by_type.setdefault(memory.type, []).append(memory)
+
+    kept: list = []
+    while len(kept) < limit and any(by_type.values()):
+        for bucket in by_type.values():
+            if not bucket:
+                continue
+            kept.append(bucket.pop(0))
+            if len(kept) >= limit:
+                break
+    return kept
 
 
 async def _fail(
