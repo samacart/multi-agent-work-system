@@ -101,17 +101,65 @@ class OpenAIEmbeddingProvider(EmbeddingProvider):
         return out
 
 
+class OllamaEmbeddingProvider(EmbeddingProvider):
+    """Real semantic embeddings from a local Ollama model. No credentials.
+
+    Ollama models are smaller than the hosted ones - nomic-embed-text returns
+    768 dimensions where text-embedding-3-small returns 1536. Rather than force
+    a schema migration on what is a deployment-time choice, short vectors are
+    zero-padded up to the column width. Cosine similarity is unchanged by
+    appending zeros to both sides: the dot product and both norms are identical.
+    """
+
+    name = "ollama"
+
+    def __init__(self, dim: int, model: str, base_url: str) -> None:
+        super().__init__(dim)
+        self.model = model
+        self.base_url = base_url.rstrip("/")
+
+    async def embed(self, texts: list[str]) -> list[list[float]]:
+        import httpx
+
+        out: list[list[float]] = []
+        async with httpx.AsyncClient(timeout=120) as client:
+            for text in texts:
+                response = await client.post(
+                    f"{self.base_url}/api/embeddings",
+                    json={"model": self.model, "prompt": text or " "},
+                )
+                if response.status_code >= 400:
+                    raise RuntimeError(
+                        f"Ollama returned {response.status_code} for model {self.model!r}. "
+                        f"Is it running, and has the model been pulled (`ollama pull {self.model}`)?"
+                    )
+                out.append(self._fit(response.json().get("embedding") or []))
+        return out
+
+    def _fit(self, vector: list[float]) -> list[float]:
+        if len(vector) == self.dim:
+            return vector
+        if len(vector) < self.dim:
+            return vector + [0.0] * (self.dim - len(vector))
+        raise ValueError(
+            f"Model {self.model!r} returned {len(vector)} dimensions, more than the {self.dim}-wide "
+            f"embedding column. Set EMBEDDING_DIM to {len(vector)} and migrate, or use a smaller model."
+        )
+
+
 def get_embedding_provider(name: str | None = None) -> EmbeddingProvider:
     settings = get_settings()
     key = (name or settings.embedding_provider).lower()
 
     if key == "hash":
         return HashEmbeddingProvider(settings.embedding_dim)
+    if key == "ollama":
+        return OllamaEmbeddingProvider(settings.embedding_dim, settings.embedding_model, settings.ollama_base_url)
     if key == "openai":
         if not settings.openai_api_key:
             raise ValueError("EMBEDDING_PROVIDER=openai requires OPENAI_API_KEY to be set")
         return OpenAIEmbeddingProvider(settings.embedding_dim, settings.embedding_model, settings.openai_api_key)
-    raise ValueError(f"Unknown embedding provider {key!r}. Available: hash, openai")
+    raise ValueError(f"Unknown embedding provider {key!r}. Available: hash, ollama, openai")
 
 
 def cosine_similarity(a: list[float], b: list[float]) -> float:

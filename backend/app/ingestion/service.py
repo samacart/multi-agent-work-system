@@ -195,19 +195,22 @@ async def ingest_source(
 
 
 def _cap_evenly(memories: list, limit: int) -> list:
-    """Take the strongest, round-robin across types.
+    """Take the strongest, round-robin across both document and type.
 
-    Ranking purely by importance lets one loud type take the whole budget -
-    a technical corpus is full of constraints, and open questions (exactly what
-    a planner needs) score lower and vanish entirely.
+    Ranking by importance alone lets one loud bucket take the whole budget, and
+    it happens on both axes. A technical corpus is full of constraints, which
+    starves the open questions a planner actually needs; and one verbose file -
+    a session log, a changelog - starves every other document, including the
+    spec someone is about to plan against.
     """
-    by_type: dict[str, list] = {}
+    buckets: dict[tuple[str, str], list] = {}
     for memory in sorted(memories, key=lambda m: (m.importance, m.confidence), reverse=True):
-        by_type.setdefault(memory.type, []).append(memory)
+        key = (str(memory.metadata.get("document", "")), memory.type)
+        buckets.setdefault(key, []).append(memory)
 
     kept: list = []
-    while len(kept) < limit and any(by_type.values()):
-        for bucket in by_type.values():
+    while len(kept) < limit and any(buckets.values()):
+        for bucket in buckets.values():
             if not bucket:
                 continue
             kept.append(bucket.pop(0))

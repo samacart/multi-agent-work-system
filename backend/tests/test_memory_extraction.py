@@ -141,3 +141,16 @@ async def test_truncated_sentences_are_not_memories(extractor):
         ]
     )
     assert await extractor.extract(truncated) == []
+
+
+async def test_percentages_are_recognised_as_concrete_facts(extractor):
+    """A trailing word-boundary after "%" sits between two non-word characters
+    and never matches, so "accepted above 85% confidence" was invisible."""
+    memories = await extractor.extract("Values read above 85% confidence are accepted automatically.")
+    assert memories
+    assert "85%" in memories[0].content
+
+    # And a percentage still raises confidence on a rule that already matched.
+    vague = await extractor.extract("We decided to accept only the values we are confident about.")
+    concrete = await extractor.extract("We decided to accept only values above 85% confidence.")
+    assert concrete[0].confidence > vague[0].confidence

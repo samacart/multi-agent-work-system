@@ -45,9 +45,12 @@ class Settings(BaseSettings):
     # Ingestion is restricted to paths under these roots.
     allowed_source_roots: str = "/data/sources"
 
-    # Embedding provider adapter. "hash" is deterministic and offline; "openai"
-    # requires OPENAI_API_KEY.
+    # Embedding provider adapter:
+    #   hash    deterministic, offline, lexical only, no dependencies
+    #   ollama  real semantic embeddings from a local model, no credentials
+    #   openai  hosted, requires OPENAI_API_KEY
     embedding_provider: str = "hash"
+    ollama_base_url: str = "http://localhost:11434"
 
     # Memory extraction adapter. "heuristic" is deterministic and offline.
     memory_extractor: str = "heuristic"
@@ -57,7 +60,9 @@ class Settings(BaseSettings):
     max_folder_files: int = 500
     ingest_extensions: str = ".md,.txt,.rst,.py,.ts,.tsx,.js,.jsx,.json,.yaml,.yml,.toml,.sql,.sh,.html,.css,.java,.go,.rb,.rs"
 
-    max_memories_per_source: int = 200
+    # A safety valve against runaway extraction, not a curation budget:
+    # a 39-file corpus at 200 kept only five memories per document.
+    max_memories_per_source: int = 1000
 
     # GitHub. Disabled unless a token is set; writes need a second opt-in.
     github_api_url: str = "https://api.github.com"

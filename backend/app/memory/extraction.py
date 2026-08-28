@@ -188,7 +188,11 @@ RULES: tuple[Rule, ...] = (
 # A sentence carrying a number, date, or version is usually a concrete fact
 # worth keeping even when no rule fires.
 _FACT_SIGNAL_RE = re.compile(
-    r"\b\d+\s*(?:days?|hours?|minutes?|seconds?|weeks?|months?|years?|%|percent|ms|mb|gb|requests?|users?)\b"
+    # Percent and other symbol units are split out: a trailing \b after "%"
+    # sits between two non-word characters and never matches, which made
+    # "accepted above 85% confidence" invisible to this detector.
+    r"\b\d+\s*%"
+    r"|\b\d+\s*(?:days?|hours?|minutes?|seconds?|weeks?|months?|years?|percent|ms|mb|gb|kb|tb|requests?|users?)\b"
     r"|\bv?\d+\.\d+"
     r"|\b(?:19|20)\d{2}\b",
     re.IGNORECASE,

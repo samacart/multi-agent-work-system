@@ -237,3 +237,33 @@ async def test_the_cap_does_not_let_one_type_crowd_out_the_rest(session, topic, 
     assert summary.memories_created == 10
     assert summary.memory_types.get("open_question", 0) > 0
     assert summary.memory_types.get("constraint", 0) > 0
+
+
+async def test_the_cap_does_not_let_one_document_crowd_out_the_rest(session, topic, tmp_path, monkeypatch):
+    """A verbose session log took 59 of 152 slots and starved the design spec
+    someone was about to plan against."""
+    from app.config import get_settings
+
+    root = tmp_path / "sources"
+    root.mkdir()
+    (root / "chatty.md").write_text(
+        "\n".join(f"We decided that chatty rule number {i} applies to onboarding invites." for i in range(60))
+    )
+    (root / "important.md").write_text(
+        "Values read above 85% confidence are accepted automatically for the patient.\n"
+        "The patient must never see a value enter the record without confirmation.\n"
+    )
+    settings = get_settings()
+    monkeypatch.setattr(settings, "allowed_source_roots", str(root))
+    monkeypatch.setattr(settings, "max_memories_per_source", 10)
+
+    source = Source(topic_id=topic.id, type="local_folder", name="docs", uri=str(root))
+    session.add(source)
+    await session.commit()
+
+    await ingest_source(session, source.id)
+
+    documents = {m.metadata_json.get("document") for m in (await session.scalars(select(Memory))).all()}
+    assert "important.md" in documents
+    contents = " ".join(m.content for m in (await session.scalars(select(Memory))).all())
+    assert "85%" in contents

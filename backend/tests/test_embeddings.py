@@ -65,3 +65,46 @@ def test_openai_provider_requires_a_key(monkeypatch):
 def test_unknown_provider_fails_loudly():
     with pytest.raises(ValueError, match="Unknown embedding provider"):
         get_embedding_provider("nope")
+
+
+# --- ollama: real semantic embeddings with no credentials ---
+
+
+def test_ollama_pads_short_vectors_to_the_column_width():
+    """nomic-embed-text returns 768 dims into a 1536-wide column. Appending
+    zeros to both sides leaves cosine similarity exactly unchanged, which beats
+    forcing a schema migration on a deployment-time choice."""
+    from app.memory.embeddings import OllamaEmbeddingProvider
+
+    provider = OllamaEmbeddingProvider(1536, "nomic-embed-text", "http://localhost:11434")
+    vector = provider._fit([0.5] * 768)  # noqa: SLF001
+
+    assert len(vector) == 1536
+    assert vector[:768] == [0.5] * 768
+    assert vector[768:] == [0.0] * 768
+    # An exact-width vector passes through untouched.
+    assert provider._fit([0.1] * 1536) == [0.1] * 1536  # noqa: SLF001
+
+
+def test_zero_padding_preserves_cosine_similarity_exactly():
+    a, b = [0.3, 0.9, -0.2], [0.5, 0.1, 0.4]
+    padded_a, padded_b = a + [0.0] * 500, b + [0.0] * 500
+    assert cosine_similarity(padded_a, padded_b) == pytest.approx(cosine_similarity(a, b))
+
+
+def test_ollama_refuses_a_model_wider_than_the_column():
+    from app.memory.embeddings import OllamaEmbeddingProvider
+
+    provider = OllamaEmbeddingProvider(768, "some-big-model", "http://localhost:11434")
+    with pytest.raises(ValueError, match="Set EMBEDDING_DIM to 1536"):
+        provider._fit([0.1] * 1536)  # noqa: SLF001
+
+
+def test_ollama_is_a_registered_provider():
+    provider = get_embedding_provider("ollama")
+    assert provider.name == "ollama"
+
+
+def test_unknown_provider_lists_ollama():
+    with pytest.raises(ValueError, match="hash, ollama, openai"):
+        get_embedding_provider("nope")
