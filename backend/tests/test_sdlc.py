@@ -469,3 +469,42 @@ async def test_a_persistent_failure_still_blocks_and_says_how_many_tries(session
 
     assert result.tasks_blocked > 0
     assert any("after 3 attempt(s)" in note for note in result.notes)
+
+
+async def test_no_task_is_left_in_progress_after_a_run(session, project):
+    """Concurrent passes advance task rows in their own sessions. Writing to a
+    stale object in the caller's session flushes its whole row and silently
+    reverts a status another session just set - which stranded two tasks in
+    `in_progress` on a real run despite their passes having succeeded."""
+    from sqlalchemy import select as sa_select
+
+    await _clear_approvals(session, project)
+    await run_project(session, project.id)
+
+    tasks = (
+        await session.scalars(
+            sa_select(Task).where(Task.project_id == project.id).execution_options(populate_existing=True)
+        )
+    ).all()
+
+    stranded = [t.title for t in tasks if t.status == "in_progress"]
+    assert stranded == [], f"tasks left mid-flight: {stranded}"
+    assert all(t.status in {"review", "verified", "done", "blocked", "backlog"} for t in tasks)
+
+
+async def test_evidence_attachment_does_not_revert_a_concurrent_status(session, project):
+    """The specific clobber: QA writes evidence onto task objects the caller
+    loaded before the wave ran."""
+    from sqlalchemy import select as sa_select
+
+    await _clear_approvals(session, project)
+    await run_project(session, project.id)
+
+    reloaded = (
+        await session.scalars(
+            sa_select(Task).where(Task.project_id == project.id).execution_options(populate_existing=True)
+        )
+    ).all()
+    with_evidence = [t for t in reloaded if t.evidence]
+    assert with_evidence, "expected QA to have attached evidence somewhere"
+    assert all(t.status != "in_progress" for t in with_evidence)

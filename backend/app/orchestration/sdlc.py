@@ -233,8 +233,19 @@ async def run_project(session: AsyncSession, project_id: uuid.UUID) -> SdlcResul
             )
         )
 
+        # Concurrent passes advanced these rows in their own sessions. Every
+        # task object this session holds is now stale, including ones from
+        # earlier waves - and writing to a stale object flushes its whole row,
+        # silently reverting a status another session just set.
+        #
+        # Reloaded eagerly rather than expired: expiring defers the read to the
+        # next attribute access, which happens in sync context and raises
+        # MissingGreenlet.
+        await session.execute(
+            select(Task).where(Task.project_id == project_id).execution_options(populate_existing=True)
+        )
+
         for task, outcome in zip(runnable, outcomes):
-            await session.refresh(task)
             if outcome.error is not None:
                 blocked_titles.add(task.title)
                 result.tasks_blocked += 1
