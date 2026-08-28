@@ -508,3 +508,118 @@ async def test_evidence_attachment_does_not_revert_a_concurrent_status(session, 
     with_evidence = [t for t in reloaded if t.evidence]
     assert with_evidence, "expected QA to have attached evidence somewhere"
     assert all(t.status != "in_progress" for t in with_evidence)
+
+
+# --- reviewers must judge the change, not a description of it ---
+
+
+@pytest.fixture
+def workspace(tmp_path, monkeypatch):
+    """A workspace with real changes for review passes to read."""
+    import subprocess
+
+    from app.config import get_settings
+
+    path = tmp_path / "workspace"
+    path.mkdir()
+    for args in (
+        ["init", "-q"],
+        ["config", "user.email", "t@example.com"],
+        ["config", "user.name", "t"],
+    ):
+        subprocess.run(["git", "-C", str(path), *args], check=True, capture_output=True)
+    (path / "confirm.py").write_text("def confirm():\n    return False\n")
+    subprocess.run(["git", "-C", str(path), "add", "-A"], check=True, capture_output=True)
+    subprocess.run(["git", "-C", str(path), "commit", "-q", "-m", "base"], check=True, capture_output=True)
+
+    (path / "confirm.py").write_text("def confirm():\n    return True  # writes to the record\n")
+    (path / "extraction_groups.py").write_text("GROUPS = ['full blood count']\n")
+
+    monkeypatch.setattr(get_settings(), "claude_code_cwd", str(path))
+    return path
+
+
+async def test_review_passes_receive_the_actual_diff(session, project, workspace):
+    """The first real run produced 9500 lines of code that no reviewer read -
+    findings came from topic memory while the change sat unopened beside them."""
+    from app.agents.runtime.base import AgentRuntime
+    from app.agents.runtime.mock import MockAgentRuntime
+
+    await _clear_approvals(session, project)
+    seen: dict[str, dict] = {}
+
+    class Recording(AgentRuntime):
+        name = "recording"
+
+        async def run(self, agent_profile, input, context=None):  # noqa: ANN001
+            seen[agent_profile.role] = dict(context.extra) if context else {}
+            return await MockAgentRuntime().run(agent_profile, input, context)
+
+    import app.orchestration.runs as runs_module
+
+    original = runs_module.get_runtime
+    runs_module.get_runtime = lambda: Recording()
+    try:
+        result = await run_project(session, project.id)
+    finally:
+        runs_module.get_runtime = original
+
+    for role in ("code_reviewer", "security_reviewer", "qa"):
+        assert role in seen, f"{role} never ran"
+        assert "confirm.py" in seen[role].get("changed_files", []), f"{role} did not receive the diff"
+        assert "extraction_groups.py" in seen[role].get("new_files", [])
+        assert "writes to the record" in seen[role].get("diff", "")
+
+    assert any("read the workspace diff" in n for n in result.notes)
+
+
+async def test_roles_that_do_not_review_are_not_handed_the_patch(session, project, workspace):
+    """Sixty thousand characters of diff is noise to a planning role."""
+    from app.agents.runtime.base import AgentRuntime
+    from app.agents.runtime.mock import MockAgentRuntime
+
+    await _clear_approvals(session, project)
+    seen: dict[str, dict] = {}
+
+    class Recording(AgentRuntime):
+        name = "recording"
+
+        async def run(self, agent_profile, input, context=None):  # noqa: ANN001
+            seen.setdefault(agent_profile.role, dict(context.extra) if context else {})
+            return await MockAgentRuntime().run(agent_profile, input, context)
+
+    import app.orchestration.runs as runs_module
+
+    original = runs_module.get_runtime
+    runs_module.get_runtime = lambda: Recording()
+    try:
+        await run_project(session, project.id)
+    finally:
+        runs_module.get_runtime = original
+
+    for role in ("lead_pm", "architect", "domain_expert", "developer"):
+        assert "diff" not in seen.get(role, {}), f"{role} was handed the patch"
+
+
+async def test_review_findings_cite_the_changed_files(session, project, workspace):
+    from sqlalchemy import select as sa_select
+
+    await _clear_approvals(session, project)
+    await run_project(session, project.id)
+
+    review = (
+        await session.scalars(sa_select(Artifact).where(Artifact.type == "review_report"))
+    ).one()
+    assert "confirm.py" in review.content
+
+
+async def test_a_run_without_a_workspace_says_so_and_still_completes(session, project, monkeypatch):
+    from app.config import get_settings
+
+    monkeypatch.setattr(get_settings(), "claude_code_cwd", "")
+    await _clear_approvals(session, project)
+
+    result = await run_project(session, project.id)
+
+    assert result.tasks_run > 0
+    assert any("no diff to read" in n for n in result.notes)

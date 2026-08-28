@@ -352,13 +352,30 @@ def _test_report(context: AgentContext) -> dict[str, Any]:
             {"criterion": c, "verdict": "unverified", "evidence": "No test run recorded by the mock runtime."}
             for c in criteria
         ],
-        "missing_coverage": _contents(context, *_RISKY, limit=5),
+        "missing_coverage": _contents(context, *_RISKY, limit=5)
+        + [f"No test observed covering {f}" for f in _changed_files(context)[:5]],
         "manual_steps": ["Exercise the primary user flow end to end"],
     }
 
 
+def _changed_files(context: AgentContext) -> list[str]:
+    changed = context.extra.get("changed_files") or []
+    new = context.extra.get("new_files") or []
+    return [str(f) for f in [*changed, *new]]
+
+
 def _review_report(context: AgentContext) -> dict[str, Any]:
+    files = _changed_files(context)
     findings = [
+        {
+            "title": f"Reviewed change to {path}",
+            "severity": "low",
+            "evidence": f"Present in the workspace diff ({context.extra.get('diff_status', '')}).",
+            "suggested_fix": "Confirm the change matches the acceptance criteria for its task.",
+            "location": path,
+        }
+        for path in files[:10]
+    ] + [
         {
             "title": f"Unaddressed risk from topic memory: {str(m['content'])[:70]}",
             "severity": _severity(m),
@@ -370,8 +387,8 @@ def _review_report(context: AgentContext) -> dict[str, Any]:
     ]
     return {
         "summary": (
-            f"Reviewed {_project_name(context)} against {len(context.memories)} topic memories. "
-            "This runtime does not read code; findings are memory-derived only."
+            f"Reviewed {_project_name(context)} against {len(context.memories)} topic memories"
+            + (f" and {len(files)} changed file(s)." if files else ". No workspace diff was available.")
         ),
         "findings": findings,
         "blocking": any(f["severity"] == "high" for f in findings),
@@ -398,10 +415,11 @@ def _security_report(context: AgentContext) -> dict[str, Any]:
                     "location": None,
                 }
             )
+    files = _changed_files(context)
     return {
         "summary": (
-            f"Security surfaces implied by {_project_name(context)}. This runtime does not read code; "
-            "it flags areas that need a human or model-backed review."
+            f"Security surfaces implied by {_project_name(context)}"
+            + (f", across {len(files)} changed file(s)." if files else ". No workspace diff was available.")
         ),
         "findings": findings,
         "blocking": False,

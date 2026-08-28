@@ -56,6 +56,9 @@ class Settings(BaseSettings):
     # Retry a failed pass before blocking it. A timeout is usually transient,
     # and blocking on the first one takes every dependent task down with it.
     sdlc_task_retries: int = 1
+    # How much of the workspace diff review passes are shown. A review that
+    # cannot see the code is an opinion about the plan, not about the work.
+    review_diff_max_chars: int = 60000
     # Reuse Claude Code sessions across passes so the repository is not
     # re-explored from cold each time. Off by default: the benefit is real but
     # unmeasured, and a reused session carries prior context into a later pass.

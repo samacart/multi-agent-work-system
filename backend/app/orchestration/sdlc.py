@@ -36,6 +36,7 @@ from app.ingestion.chunk import content_hash
 from app.memory.embeddings import get_embedding_provider
 from app.orchestration.runs import AgentRunFailed, execute_run
 from app.projects.planning import gather_context
+from app.orchestration.workspace import read_workspace_diff
 from app.projects.tasks import check_transition, path_to
 
 log = logging.getLogger(__name__)
@@ -61,6 +62,9 @@ TASK_ARTIFACTS: dict[str, str] = {
 
 # Roles whose work is what an approval gate exists to control.
 GATED_ROLES = {"developer", "architect", "release_manager"}
+
+# Roles that must judge the actual change, not a description of it.
+DIFF_READING_ROLES = {"qa", "code_reviewer", "security_reviewer", "release_manager"}
 
 TERMINAL_STATUSES = {"done"}
 
@@ -170,6 +174,19 @@ async def run_project(session: AsyncSession, project_id: uuid.UUID) -> SdlcResul
     await session.commit()
 
     base_context, _memories = await gather_context(session, project)
+
+    settings = get_settings()
+    workspace_diff = await read_workspace_diff(
+        settings.claude_code_cwd or None, max_chars=settings.review_diff_max_chars
+    )
+    if workspace_diff.available and not workspace_diff.is_empty:
+        result.notes.append(
+            f"Review passes read the workspace diff: {len(workspace_diff.changed_files)} modified, "
+            f"{len(workspace_diff.new_files)} new file(s)"
+        )
+    elif not workspace_diff.available:
+        result.notes.append(f"Review passes have no diff to read - {workspace_diff.reason}")
+
     pending = await _pending_approvals(session, project_id)
     if pending:
         result.notes.append(
@@ -228,6 +245,7 @@ async def run_project(session: AsyncSession, project_id: uuid.UUID) -> SdlcResul
                     base_context=base_context,
                     all_criteria=all_criteria,
                     completed_titles=done_titles,
+                    workspace_diff=workspace_diff,
                 )
                 for task in runnable
             )
@@ -278,7 +296,7 @@ async def run_project(session: AsyncSession, project_id: uuid.UUID) -> SdlcResul
             f"{awaiting} task(s) are awaiting verification evidence; nothing is marked done without it"
         )
 
-    release = await _run_release_pass(session, project, base_context, tasks, result)
+    release = await _run_release_pass(session, project, base_context, tasks, result, workspace_diff)
     if release is not None:
         result.lessons_stored = await _store_lessons(session, project, release, review, security)
 
@@ -328,6 +346,7 @@ async def _run_task_isolated(
     base_context: AgentContext,
     all_criteria: list[str],
     completed_titles: list[str],
+    workspace_diff=None,  # noqa: ANN001 - WorkspaceDiff
 ) -> _TaskOutcome:
     """Run one task pass in its own session, so a wave can run concurrently."""
     async with semaphore, maker() as session:
@@ -338,12 +357,18 @@ async def _run_task_isolated(
 
         role = task.agent_role or "developer"
         agent_task = ROLE_TASKS.get(role, "task_outcome")
+        # Reviewers and QA judge the change; everyone else would only be
+        # distracted by sixty thousand characters of patch.
+        diff_context = (
+            workspace_diff.as_context() if workspace_diff is not None and role in DIFF_READING_ROLES else {}
+        )
         context = AgentContext(
             project_id=str(project_id),
             task_id=str(task_id),
             memories=base_context.memories,
             extra={
                 **base_context.extra,
+                **diff_context,
                 "task_title": task.title,
                 "task_role": role,
                 # QA verifies the whole project's criteria, not just its own.
@@ -501,7 +526,12 @@ async def _promote_verified_tasks(
 
 
 async def _run_release_pass(
-    session: AsyncSession, project: Project, base: AgentContext, tasks: list[Task], result: SdlcResult
+    session: AsyncSession,
+    project: Project,
+    base: AgentContext,
+    tasks: list[Task],
+    result: SdlcResult,
+    workspace_diff=None,  # noqa: ANN001 - WorkspaceDiff
 ) -> ReleaseSummary | None:
     """Always runs: it summarises what actually happened, including shortfalls."""
     context = AgentContext(
@@ -509,6 +539,7 @@ async def _run_release_pass(
         memories=base.memories,
         extra={
             **base.extra,
+            **(workspace_diff.as_context() if workspace_diff is not None else {}),
             "completed_tasks": [t.title for t in tasks if t.status == "done"],
         },
     )
