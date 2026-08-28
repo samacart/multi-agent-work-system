@@ -410,3 +410,41 @@ async def test_planning_runs_end_to_end_on_a_non_mock_runtime(session):
     task = (await session.scalars(select(Task))).one()
     assert task.title == "Design invite expiry"
     assert task.agent_role == "architect"
+
+
+# --- claude code is destructive by default and must be constrained ---
+
+
+def test_claude_code_is_read_only_by_default():
+    """Headless `claude -p` edits files with no permission prompt - verified
+    against the real CLI. There is no interactive gate to fall back on, so the
+    constraint has to be passed explicitly on every invocation."""
+    from app.config import get_settings
+
+    settings = get_settings()
+    flags = settings.claude_code_tool_flags
+
+    assert "--disallowedTools" in flags
+    blocked = flags[flags.index("--disallowedTools") + 1]
+    for tool in ("Edit", "Write", "Bash"):
+        assert tool in blocked
+    assert settings.claude_code_can_write is False
+
+
+def test_the_runtime_passes_its_tool_flags_to_the_cli():
+    from app.agents.runtime.claude_code import ClaudeCodeRuntime
+
+    runtime = _claude_code(lambda prompt: _echo(json.dumps(BRIEF)))
+    assert "--disallowedTools" in runtime.tool_flags
+
+    explicit = ClaudeCodeRuntime(runner=lambda p: _echo("{}"), tool_flags=["--allowedTools", "Read"])
+    assert explicit.tool_flags == ["--allowedTools", "Read"]
+
+
+def test_enabling_writes_is_visible_in_config(monkeypatch):
+    """Turning writes on should be legible, not buried in a tool string."""
+    from app.config import get_settings
+
+    settings = get_settings()
+    monkeypatch.setattr(settings, "claude_code_disallowed_tools", "NotebookEdit")
+    assert settings.claude_code_can_write is True

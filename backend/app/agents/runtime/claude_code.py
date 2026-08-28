@@ -67,12 +67,17 @@ class ClaudeCodeRuntime(AgentRuntime):
         cwd: str | None = None,
         timeout: int | None = None,
         runner=None,  # noqa: ANN001 - injected in tests
+        tool_flags: list[str] | None = None,
     ) -> None:
         settings = get_settings()
         self.binary = binary or settings.claude_code_binary
         self.cwd = cwd or settings.claude_code_cwd or None
         self.timeout = timeout or settings.claude_code_timeout_seconds
         self._runner = runner
+        # Headless `claude -p` edits files without prompting, so the constraint
+        # has to be passed explicitly - there is no interactive gate to fall
+        # back on.
+        self.tool_flags = settings.claude_code_tool_flags if tool_flags is None else tool_flags
 
         if self._runner is None and shutil.which(self.binary) is None:
             raise ClaudeCodeUnavailable(
@@ -150,6 +155,7 @@ class ClaudeCodeRuntime(AgentRuntime):
             prompt,
             "--output-format",
             "json",
+            *self.tool_flags,
             cwd=self.cwd,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,

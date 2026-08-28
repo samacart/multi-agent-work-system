@@ -41,6 +41,13 @@ class Settings(BaseSettings):
     claude_code_binary: str = "claude"
     claude_code_cwd: str = ""
     claude_code_timeout_seconds: int = 600
+    # Claude Code has real filesystem and shell access, and in headless `-p`
+    # mode it edits without prompting. Read-only by default: an agent asked to
+    # produce a plan or a review has no business changing the repository it is
+    # reading. Enabling writes should be a deliberate act, ideally against a
+    # throwaway git worktree rather than a working tree.
+    claude_code_disallowed_tools: str = "Edit,Write,MultiEdit,NotebookEdit,Bash"
+    claude_code_allowed_tools: str = ""
 
     # Ingestion is restricted to paths under these roots.
     allowed_source_roots: str = "/data/sources"
@@ -82,6 +89,20 @@ class Settings(BaseSettings):
     @property
     def allowed_source_root_list(self) -> list[str]:
         return [p.strip() for p in self.allowed_source_roots.split(",") if p.strip()]
+
+    @property
+    def claude_code_tool_flags(self) -> list[str]:
+        flags: list[str] = []
+        if self.claude_code_allowed_tools.strip():
+            flags += ["--allowedTools", self.claude_code_allowed_tools.strip()]
+        if self.claude_code_disallowed_tools.strip():
+            flags += ["--disallowedTools", self.claude_code_disallowed_tools.strip()]
+        return flags
+
+    @property
+    def claude_code_can_write(self) -> bool:
+        blocked = {t.strip().lower() for t in self.claude_code_disallowed_tools.split(",")}
+        return not {"edit", "write"} & blocked
 
     @property
     def github_enabled(self) -> bool:
