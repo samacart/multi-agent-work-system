@@ -78,6 +78,8 @@ class SdlcResult:
     tasks_done: int = 0
     tasks_blocked: int = 0
     tasks_skipped: int = 0
+    tasks_filtered: int = 0
+    roles: list[str] = field(default_factory=list)
     runs: list[str] = field(default_factory=list)
     artifacts: list[str] = field(default_factory=list)
     findings: int = 0
@@ -160,7 +162,16 @@ def _advance(task: Task, target: str) -> None:
         task.status = step
 
 
-async def run_project(session: AsyncSession, project_id: uuid.UUID) -> SdlcResult:
+async def run_project(
+    session: AsyncSession, project_id: uuid.UUID, roles: set[str] | None = None
+) -> SdlcResult:
+    """Run the SDLC loop.
+
+    `roles` narrows the run to those agent roles - re-reviewing a change without
+    letting the developer roles edit further on top of it, for instance. A task
+    excluded by the filter is passed over, not blocked: its dependents are not
+    punished for a task nobody asked to run.
+    """
     project = await session.get(Project, project_id)
     if project is None:
         raise SdlcError(f"Project {project_id} not found")
@@ -169,7 +180,9 @@ async def run_project(session: AsyncSession, project_id: uuid.UUID) -> SdlcResul
     if not tasks:
         raise SdlcError("Project has no tasks. Run planning first.")
 
-    result = SdlcResult(project_id=str(project.id), status="running")
+    result = SdlcResult(project_id=str(project.id), status="running", roles=sorted(roles or []))
+    if roles:
+        result.notes.append(f"Filtered to roles: {', '.join(sorted(roles))}")
     project.status = "running"
     await session.commit()
 
@@ -211,6 +224,11 @@ async def run_project(session: AsyncSession, project_id: uuid.UUID) -> SdlcResul
                 result.tasks_skipped += 1
                 continue
 
+            role = task.agent_role or "developer"
+            if roles and role not in roles:
+                result.tasks_filtered += 1
+                continue
+
             depends = (task.metadata_json or {}).get("depends_on", [])
             if any(title in blocked_titles for title in depends):
                 blocked_titles.add(task.title)
@@ -218,7 +236,6 @@ async def run_project(session: AsyncSession, project_id: uuid.UUID) -> SdlcResul
                 result.notes.append(f"Skipped '{task.title}': a task it depends on did not complete")
                 continue
 
-            role = task.agent_role or "developer"
             if pending and role in GATED_ROLES:
                 _advance(task, "blocked")
                 blocked_titles.add(task.title)
@@ -296,9 +313,14 @@ async def run_project(session: AsyncSession, project_id: uuid.UUID) -> SdlcResul
             f"{awaiting} task(s) are awaiting verification evidence; nothing is marked done without it"
         )
 
-    release = await _run_release_pass(session, project, base_context, tasks, result, workspace_diff)
-    if release is not None:
-        result.lessons_stored = await _store_lessons(session, project, release, review, security)
+    # The release pass summarises the whole project, so it only makes sense when
+    # the run was not narrowed to a subset of roles.
+    if roles and "release_manager" not in roles:
+        result.notes.append("Release pass skipped: the run was filtered to other roles")
+    else:
+        release = await _run_release_pass(session, project, base_context, tasks, result, workspace_diff)
+        if release is not None:
+            result.lessons_stored = await _store_lessons(session, project, release, review, security)
 
     await session.commit()
     result.status = await _finalise_project_status(session, project, tasks, result)
@@ -668,8 +690,15 @@ async def _store_lessons(
 async def _finalise_project_status(
     session: AsyncSession, project: Project, tasks: list[Task], result: SdlcResult
 ) -> str:
+    """A filtered run says nothing about the tasks it did not touch, so it must
+    not conclude the project is blocked or delivered on partial evidence."""
     for task in tasks:
         await session.refresh(task)
+
+    if result.roles and result.tasks_filtered:
+        project.status = "review"
+        await session.commit()
+        return project.status
 
     if all(t.status == "done" for t in tasks):
         project.status = "delivered"

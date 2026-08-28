@@ -47,8 +47,9 @@ async def handle_run_project(job: Job) -> dict[str, Any]:
     from app.orchestration.sdlc import run_project
 
     project_id = uuid.UUID(str(job.payload["project_id"]))
+    roles = job.payload.get("roles")
     async with get_sessionmaker()() as session:
-        result = await run_project(session, project_id)
+        result = await run_project(session, project_id, roles=set(roles) if roles else None)
     return result.as_dict()
 
 

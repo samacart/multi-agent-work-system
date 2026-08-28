@@ -130,6 +130,12 @@ async def run_planning(
 async def run_sdlc(
     project_id: uuid.UUID,
     response: Response,
+    roles: str | None = Query(
+        default=None,
+        description="Comma-separated agent roles to run, e.g. qa,code_reviewer,security_reviewer. "
+        "Narrows the run - useful for re-reviewing a change without letting the developer roles "
+        "edit further on top of it. Omit to run every task.",
+    ),
     mode: str = Query(
         default="async",
         pattern="^(async|sync)$",
@@ -150,19 +156,37 @@ async def run_sdlc(
     if not has_tasks:
         raise HTTPException(status_code=409, detail="Project has no tasks. Run planning first.")
 
+    role_filter: set[str] | None = None
+    if roles:
+        role_filter = {r.strip() for r in roles.split(",") if r.strip()}
+        unknown = sorted(role_filter - set(AGENT_ROLES))
+        if unknown:
+            raise HTTPException(
+                status_code=422,
+                detail=f"Unknown roles: {', '.join(unknown)}. Valid roles: {', '.join(AGENT_ROLES)}",
+            )
+
     if mode == "async":
         try:
-            job = await enqueue("run_project", {"project_id": str(project_id)})
+            job = await enqueue(
+                "run_project",
+                {"project_id": str(project_id), "roles": sorted(role_filter) if role_filter else None},
+            )
         except Exception as exc:  # noqa: BLE001 - Redis down is operational
             raise HTTPException(
                 status_code=503,
                 detail=f"Job queue unavailable ({type(exc).__name__}). Retry, or use ?mode=sync.",
             ) from exc
         response.status_code = 202
-        return {"mode": "async", "job_id": job.id, "project_id": str(project_id)}
+        return {
+            "mode": "async",
+            "job_id": job.id,
+            "project_id": str(project_id),
+            "roles": sorted(role_filter) if role_filter else None,
+        }
 
     try:
-        result = await run_project(session, project_id)
+        result = await run_project(session, project_id, roles=role_filter)
     except SdlcError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     return result.as_dict()

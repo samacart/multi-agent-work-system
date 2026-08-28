@@ -316,3 +316,25 @@ async def test_registering_a_github_source(client, seeded):
     )
     assert response.status_code == 201
     assert response.json()["type"] == "github_issue"
+
+
+async def test_running_a_subset_of_roles_over_the_api(client, seeded):
+    project_id = seeded["project"]["id"]
+    await client.post(f"/projects/{project_id}/plan?gates=false")
+
+    response = await client.post(
+        f"/projects/{project_id}/run?mode=sync&roles=qa,code_reviewer,security_reviewer"
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert body["roles"] == ["code_reviewer", "qa", "security_reviewer"]
+    assert body["tasks_filtered"] > 0
+
+
+async def test_an_unknown_role_is_rejected(client, seeded):
+    project_id = seeded["project"]["id"]
+    await client.post(f"/projects/{project_id}/plan?gates=false")
+
+    response = await client.post(f"/projects/{project_id}/run?mode=sync&roles=qa,wizard")
+    assert response.status_code == 422
+    assert "wizard" in response.json()["detail"]

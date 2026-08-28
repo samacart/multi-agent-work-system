@@ -623,3 +623,81 @@ async def test_a_run_without_a_workspace_says_so_and_still_completes(session, pr
 
     assert result.tasks_run > 0
     assert any("no diff to read" in n for n in result.notes)
+
+
+# --- narrowing a run to specific roles ---
+
+
+async def test_a_filtered_run_touches_only_those_roles(session, project, workspace):
+    """Re-reviewing a change should not let the developer roles edit further on
+    top of the thing being reviewed."""
+    from app.agents.runtime.base import AgentRuntime
+    from app.agents.runtime.mock import MockAgentRuntime
+
+    await _clear_approvals(session, project)
+    ran: list[str] = []
+
+    class Recording(AgentRuntime):
+        name = "recording"
+
+        async def run(self, agent_profile, input, context=None):  # noqa: ANN001
+            ran.append(agent_profile.role)
+            return await MockAgentRuntime().run(agent_profile, input, context)
+
+    import app.orchestration.runs as runs_module
+
+    original = runs_module.get_runtime
+    runs_module.get_runtime = lambda: Recording()
+    try:
+        result = await run_project(
+            session, project.id, roles={"qa", "code_reviewer", "security_reviewer"}
+        )
+    finally:
+        runs_module.get_runtime = original
+
+    assert set(ran) <= {"qa", "code_reviewer", "security_reviewer"}
+    assert "developer" not in ran
+    assert result.tasks_filtered > 0
+    assert any("Filtered to roles" in n for n in result.notes)
+
+
+async def test_a_filtered_out_task_does_not_block_its_dependents(session, project, workspace):
+    """A task nobody asked to run is passed over, not failed - its dependents
+    must not be punished for it."""
+    await _clear_approvals(session, project)
+
+    result = await run_project(session, project.id, roles={"code_reviewer"})
+
+    assert result.tasks_run >= 1
+    assert result.tasks_skipped == 0
+    assert result.tasks_blocked == 0
+
+
+async def test_a_filtered_run_does_not_conclude_the_project(session, project, workspace):
+    """It says nothing about the tasks it never touched."""
+    await _clear_approvals(session, project)
+
+    result = await run_project(session, project.id, roles={"code_reviewer"})
+
+    assert result.status == "review"
+    await session.refresh(project)
+    assert project.status == "review"
+
+
+async def test_the_release_pass_is_skipped_unless_its_role_is_included(session, project, workspace):
+    from sqlalchemy import select as sa_select
+
+    await _clear_approvals(session, project)
+
+    result = await run_project(session, project.id, roles={"code_reviewer"})
+
+    assert any("Release pass skipped" in n for n in result.notes)
+    assert result.lessons_stored == 0
+    finals = (await session.scalars(sa_select(Artifact).where(Artifact.type == "final_summary"))).all()
+    assert finals == []
+
+
+async def test_including_the_release_role_runs_the_release_pass(session, project, workspace):
+    await _clear_approvals(session, project)
+    result = await run_project(session, project.id, roles={"code_reviewer", "release_manager"})
+    assert "release_notes" in result.artifacts
