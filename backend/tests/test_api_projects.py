@@ -207,14 +207,14 @@ async def test_running_the_sdlc_loop_over_the_api(client, seeded):
     await client.post(f"/projects/{project_id}/plan")
 
     # A pending gate holds back the roles it governs.
-    blocked = (await client.post(f"/projects/{project_id}/run")).json()
+    blocked = (await client.post(f"/projects/{project_id}/run?mode=sync")).json()
     assert blocked["tasks_blocked"] > 0
     assert (await client.get(f"/projects/{project_id}")).json()["status"] == "blocked"
 
     for approval in (await client.get(f"/projects/{project_id}/approvals")).json():
         await client.post(f"/approvals/{approval['id']}/respond", json={"status": "approved"})
 
-    result = (await client.post(f"/projects/{project_id}/run")).json()
+    result = (await client.post(f"/projects/{project_id}/run?mode=sync")).json()
     assert result["tasks_blocked"] == 0
     assert result["tasks_run"] >= 8
     assert result["lessons_stored"] > 0
@@ -231,9 +231,35 @@ async def test_running_the_sdlc_loop_over_the_api(client, seeded):
 
 
 async def test_running_an_unplanned_project_returns_409(client, seeded):
-    response = await client.post(f"/projects/{seeded['project']['id']}/run")
-    assert response.status_code == 409
-    assert "Run planning first" in response.json()["detail"]
+    """Refused up front in either mode - queueing it would fail inside the
+    worker where nobody is watching."""
+    for mode in ("sync", "async"):
+        response = await client.post(f"/projects/{seeded['project']['id']}/run?mode={mode}")
+        assert response.status_code == 409
+        assert "Run planning first" in response.json()["detail"]
+
+
+async def test_running_defaults_to_async(client, seeded, monkeypatch):
+    """A full run takes tens of minutes; a synchronous request that long dies
+    on any client disconnect and strands the project mid-run."""
+    project_id = seeded["project"]["id"]
+    await client.post(f"/projects/{project_id}/plan")
+
+    queued: list = []
+
+    async def fake_enqueue(job_type, payload=None):  # noqa: ANN001, ANN202
+        queued.append((job_type, payload))
+
+        class Job:
+            id = "job-1"
+
+        return Job()
+
+    monkeypatch.setattr("app.api.routes.projects.enqueue", fake_enqueue)
+    response = await client.post(f"/projects/{project_id}/run")
+
+    assert response.status_code == 202
+    assert queued[0][0] == "run_project"
 
 
 async def test_github_status_reports_configuration_without_the_token(client):

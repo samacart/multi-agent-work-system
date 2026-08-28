@@ -29,6 +29,27 @@ log = logging.getLogger(__name__)
 
 _FENCE_RE = re.compile(r"```(?:json)?\s*(\{.*?\})\s*```", re.S)
 
+# Idle Claude Code sessions available for reuse, keyed by pool name. A session
+# is a linear conversation, so two concurrent passes must never share one -
+# hence a pool of sessions to borrow from rather than one session per project.
+_SESSION_POOL: dict[str, list[str]] = {}
+_POOL_LOCK = asyncio.Lock()
+
+
+async def _borrow_session(key: str) -> str | None:
+    async with _POOL_LOCK:
+        pool = _SESSION_POOL.get(key) or []
+        return pool.pop() if pool else None
+
+
+async def _return_session(key: str, session_id: str) -> None:
+    async with _POOL_LOCK:
+        _SESSION_POOL.setdefault(key, []).append(session_id)
+
+
+def clear_session_pool() -> None:
+    _SESSION_POOL.clear()
+
 
 class ClaudeCodeUnavailable(Exception):
     pass
@@ -68,6 +89,7 @@ class ClaudeCodeRuntime(AgentRuntime):
         timeout: int | None = None,
         runner=None,  # noqa: ANN001 - injected in tests
         tool_flags: list[str] | None = None,
+        reuse_sessions: bool | None = None,
     ) -> None:
         settings = get_settings()
         self.binary = binary or settings.claude_code_binary
@@ -78,6 +100,9 @@ class ClaudeCodeRuntime(AgentRuntime):
         # has to be passed explicitly - there is no interactive gate to fall
         # back on.
         self.tool_flags = settings.claude_code_tool_flags if tool_flags is None else tool_flags
+        self.reuse_sessions = (
+            settings.claude_code_reuse_sessions if reuse_sessions is None else reuse_sessions
+        )
 
         if self._runner is None and shutil.which(self.binary) is None:
             raise ClaudeCodeUnavailable(
@@ -104,8 +129,14 @@ class ClaudeCodeRuntime(AgentRuntime):
 
         prompt = self._build_prompt(agent_profile, task, model.model_json_schema(), input, context)
 
+        # Reusing a session skips re-exploring the repository from cold, which
+        # dominates the cost of a pass. Borrowed, not shared: a session is one
+        # linear conversation.
+        pool_key = str(input.get("session_pool") or "") if self.reuse_sessions else ""
+        resume_id = await _borrow_session(pool_key) if pool_key else None
+
         try:
-            stdout = await self._invoke(prompt)
+            stdout = await self._invoke(prompt, resume_id)
         except (ClaudeCodeUnavailable, asyncio.TimeoutError) as exc:
             return AgentRunResult(status="failed", error=str(exc) or "Claude Code timed out")
 
@@ -113,6 +144,9 @@ class ClaudeCodeRuntime(AgentRuntime):
             payload = _extract_json(stdout)
         except (ValueError, json.JSONDecodeError) as exc:
             return AgentRunResult(status="failed", error=f"Could not read Claude Code output as JSON: {exc}")
+
+        if pool_key and isinstance(payload.get("session_id"), str):
+            await _return_session(pool_key, payload["session_id"])
 
         # `claude -p --output-format json` wraps the answer in an envelope.
         if "result" in payload and not set(model.model_fields) & set(payload):
@@ -145,16 +179,18 @@ class ClaudeCodeRuntime(AgentRuntime):
             f"```json\n{json.dumps(schema, indent=2)}\n```"
         )
 
-    async def _invoke(self, prompt: str) -> str:
+    async def _invoke(self, prompt: str, resume_id: str | None = None) -> str:
         if self._runner is not None:
             return await self._runner(prompt)
 
+        resume_flags = ["--resume", resume_id] if resume_id else []
         process = await asyncio.create_subprocess_exec(
             self.binary,
             "-p",
             prompt,
             "--output-format",
             "json",
+            *resume_flags,
             *self.tool_flags,
             cwd=self.cwd,
             stdout=asyncio.subprocess.PIPE,

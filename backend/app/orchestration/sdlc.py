@@ -19,16 +19,18 @@ Two rules shape everything here:
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import uuid
 from dataclasses import dataclass, field
 
 from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.agents.contracts import ReleaseSummary, ReviewReport, TestReport
 from app.agents.runtime.base import AgentContext
 from app.artifacts.service import bullets, upsert_artifact
+from app.config import get_settings
 from app.db.models import ApprovalRequest, Memory, Project, Task
 from app.ingestion.chunk import content_hash
 from app.memory.embeddings import get_embedding_provider
@@ -88,36 +90,47 @@ class SdlcError(Exception):
     pass
 
 
-def order_tasks(tasks: list[Task]) -> list[Task]:
-    """Topological order by declared dependencies, stable by creation order.
+def order_waves(tasks: list[Task]) -> list[list[Task]]:
+    """Group tasks into dependency waves.
+
+    Everything in a wave has all of its dependencies satisfied by earlier waves,
+    so a wave can run concurrently. A security review and a QA strategy do not
+    depend on each other, and running them one after the other wastes minutes
+    per pass when each pass is a whole agent invocation.
 
     A dependency cycle - or a dependency on a task that no longer exists - must
-    not hang or drop work, so anything unresolved is appended at the end.
+    not hang or drop work, so anything unresolved becomes a final wave.
     """
     known_titles = {task.title for task in tasks}
-    ordered: list[Task] = []
+    waves: list[list[Task]] = []
     # Keyed by title, not id: ids are unset until flush, and titles are what
     # dependencies are declared against anyway.
     placed: set[str] = set()
 
     remaining = list(tasks)
     while remaining:
-        progressed = False
-        still_waiting = []
-        for task in remaining:
-            depends = [d for d in (task.metadata_json or {}).get("depends_on", []) if d in known_titles]
-            if all(d in placed for d in depends):
-                ordered.append(task)
-                placed.add(task.title)
-                progressed = True
-            else:
-                still_waiting.append(task)
-        if not progressed:
+        wave = [
+            task
+            for task in remaining
+            if all(
+                d in placed
+                for d in ((task.metadata_json or {}).get("depends_on", []))
+                if d in known_titles
+            )
+        ]
+        if not wave:
             # Cycle or unsatisfiable dependency: run the rest in creation order.
-            ordered.extend(still_waiting)
+            waves.append(remaining)
             break
-        remaining = still_waiting
-    return ordered
+        waves.append(wave)
+        placed.update(task.title for task in wave)
+        remaining = [task for task in remaining if task not in wave]
+    return waves
+
+
+def order_tasks(tasks: list[Task]) -> list[Task]:
+    """Topological order by declared dependencies, stable by creation order."""
+    return [task for wave in order_waves(tasks) for task in wave]
 
 
 async def _pending_approvals(session: AsyncSession, project_id: uuid.UUID) -> list[ApprovalRequest]:
@@ -166,69 +179,75 @@ async def run_project(session: AsyncSession, project_id: uuid.UUID) -> SdlcResul
 
     blocked_titles: set[str] = set()
     reports: dict[str, object] = {}
+    limit = max(1, get_settings().sdlc_max_parallel_tasks)
+    semaphore = asyncio.Semaphore(limit)
+    maker = _session_factory(session)
 
-    for task in order_tasks(tasks):
-        if task.status in TERMINAL_STATUSES:
-            result.tasks_skipped += 1
-            continue
+    # Snapshot what a task pass needs, so concurrent passes do not touch the
+    # caller's session: an AsyncSession is not safe to share across tasks.
+    all_criteria = sorted({c for t in tasks for c in t.acceptance_criteria})
 
-        depends = (task.metadata_json or {}).get("depends_on", [])
-        if any(title in blocked_titles for title in depends):
-            blocked_titles.add(task.title)
-            result.tasks_skipped += 1
-            result.notes.append(f"Skipped '{task.title}': a task it depends on did not complete")
-            continue
+    for wave in order_waves(tasks):
+        runnable: list[Task] = []
+        for task in wave:
+            if task.status in TERMINAL_STATUSES:
+                result.tasks_skipped += 1
+                continue
 
-        role = task.agent_role or "developer"
+            depends = (task.metadata_json or {}).get("depends_on", [])
+            if any(title in blocked_titles for title in depends):
+                blocked_titles.add(task.title)
+                result.tasks_skipped += 1
+                result.notes.append(f"Skipped '{task.title}': a task it depends on did not complete")
+                continue
 
-        if pending and role in GATED_ROLES:
-            _advance(task, "blocked")
-            blocked_titles.add(task.title)
-            result.tasks_blocked += 1
-            result.notes.append(
-                f"Blocked '{task.title}': {role} work needs the pending approval gate(s) answered first"
-            )
-            await session.commit()
-            continue
+            role = task.agent_role or "developer"
+            if pending and role in GATED_ROLES:
+                _advance(task, "blocked")
+                blocked_titles.add(task.title)
+                result.tasks_blocked += 1
+                result.notes.append(
+                    f"Blocked '{task.title}': {role} work needs the pending approval gate(s) answered first"
+                )
+                continue
 
-        agent_task = ROLE_TASKS.get(role, "task_outcome")
-        context = _task_context(base_context, project, task, tasks)
+            runnable.append(task)
 
-        _advance(task, "in_progress")
         await session.commit()
-
-        try:
-            outcome = await execute_run(
-                session,
-                role=role,
-                task=agent_task,
-                instruction=f"{task.title}. {task.description or ''}".strip(),
-                context=context,
-                project_id=project.id,
-                task_id=task.id,
-            )
-        except AgentRunFailed as exc:
-            _advance(task, "blocked")
-            blocked_titles.add(task.title)
-            result.tasks_blocked += 1
-            result.notes.append(f"Blocked '{task.title}': agent run failed - {exc}")
-            await session.commit()
+        if not runnable:
             continue
 
-        result.runs.append(str(outcome.run.id))
-        result.tasks_run += 1
-        reports[agent_task] = outcome.output
+        done_titles = [t.title for t in tasks if t.status in {"verified", "done"}]
+        outcomes = await asyncio.gather(
+            *(
+                _run_task_isolated(
+                    semaphore,
+                    maker,
+                    project_id=project.id,
+                    task_id=task.id,
+                    base_context=base_context,
+                    all_criteria=all_criteria,
+                    completed_titles=done_titles,
+                )
+                for task in runnable
+            )
+        )
 
-        artifact_type = TASK_ARTIFACTS.get(agent_task)
-        if artifact_type:
-            await _write_report_artifact(session, project, task, artifact_type, outcome.output)
-            result.artifacts.append(artifact_type)
+        for task, outcome in zip(runnable, outcomes):
+            await session.refresh(task)
+            if outcome.error is not None:
+                blocked_titles.add(task.title)
+                result.tasks_blocked += 1
+                result.notes.append(f"Blocked '{task.title}': agent run failed - {outcome.error}")
+                continue
 
-        if agent_task == "test_report":
-            await _attach_evidence(session, tasks, outcome.output)
-
-        _advance(task, "review")
-        await session.commit()
+            result.runs.append(outcome.run_id)
+            result.tasks_run += 1
+            reports[outcome.agent_task] = outcome.output
+            if outcome.artifact_type:
+                result.artifacts.append(outcome.artifact_type)
+            if outcome.agent_task == "test_report":
+                await _attach_evidence(session, tasks, outcome.output)
 
     review: ReviewReport | None = reports.get("review_report")  # type: ignore[assignment]
     security: ReviewReport | None = reports.get("security_report")  # type: ignore[assignment]
@@ -263,6 +282,95 @@ async def run_project(session: AsyncSession, project_id: uuid.UUID) -> SdlcResul
         result.tasks_blocked,
     )
     return result
+
+
+@dataclass
+class _TaskOutcome:
+    agent_task: str
+    run_id: str = ""
+    output: object = None
+    artifact_type: str | None = None
+    error: str | None = None
+
+
+def _session_factory(session: AsyncSession) -> async_sessionmaker[AsyncSession]:
+    """A factory bound to the caller's own engine.
+
+    Concurrent passes need their own sessions, but they must be on the same
+    engine as the caller - reaching for the global one silently talks to a
+    different database whenever the caller was handed a session (dependency
+    override, test fixture, worker).
+    """
+    bind = session.bind
+    if bind is None:  # pragma: no cover - a session is always bound in practice
+        from app.db.session import get_sessionmaker
+
+        return get_sessionmaker()
+    return async_sessionmaker(bind, expire_on_commit=False)
+
+
+async def _run_task_isolated(
+    semaphore: asyncio.Semaphore,
+    maker: async_sessionmaker[AsyncSession],
+    project_id: uuid.UUID,
+    task_id: uuid.UUID,
+    base_context: AgentContext,
+    all_criteria: list[str],
+    completed_titles: list[str],
+) -> _TaskOutcome:
+    """Run one task pass in its own session, so a wave can run concurrently."""
+    async with semaphore, maker() as session:
+        task = await session.get(Task, task_id)
+        project = await session.get(Project, project_id)
+        if task is None or project is None:
+            return _TaskOutcome(agent_task="task_outcome", error="task or project vanished mid-run")
+
+        role = task.agent_role or "developer"
+        agent_task = ROLE_TASKS.get(role, "task_outcome")
+        context = AgentContext(
+            project_id=str(project_id),
+            task_id=str(task_id),
+            memories=base_context.memories,
+            extra={
+                **base_context.extra,
+                "task_title": task.title,
+                "task_role": role,
+                # QA verifies the whole project's criteria, not just its own.
+                "acceptance_criteria": all_criteria if role == "qa" else list(task.acceptance_criteria),
+                "completed_tasks": completed_titles,
+            },
+        )
+
+        _advance(task, "in_progress")
+        await session.commit()
+
+        try:
+            outcome = await execute_run(
+                session,
+                role=role,
+                task=agent_task,
+                instruction=f"{task.title}. {task.description or ''}".strip(),
+                context=context,
+                project_id=project_id,
+                task_id=task_id,
+            )
+        except AgentRunFailed as exc:
+            _advance(task, "blocked")
+            await session.commit()
+            return _TaskOutcome(agent_task=agent_task, error=str(exc))
+
+        artifact_type = TASK_ARTIFACTS.get(agent_task)
+        if artifact_type:
+            await _write_report_artifact(session, project, task, artifact_type, outcome.output)
+
+        _advance(task, "review")
+        await session.commit()
+        return _TaskOutcome(
+            agent_task=agent_task,
+            run_id=str(outcome.run.id),
+            output=outcome.output,
+            artifact_type=artifact_type,
+        )
 
 
 def _task_context(base: AgentContext, project: Project, task: Task, tasks: list[Task]) -> AgentContext:

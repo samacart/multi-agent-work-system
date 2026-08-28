@@ -448,3 +448,72 @@ def test_enabling_writes_is_visible_in_config(monkeypatch):
     settings = get_settings()
     monkeypatch.setattr(settings, "claude_code_disallowed_tools", "NotebookEdit")
     assert settings.claude_code_can_write is True
+
+
+# --- session pooling ---
+
+
+async def test_a_session_is_borrowed_not_shared():
+    """A Claude Code session is one linear conversation, so two concurrent
+    passes must never resume the same id."""
+    from app.agents.runtime.claude_code import _borrow_session, _return_session, clear_session_pool
+
+    clear_session_pool()
+    try:
+        assert await _borrow_session("proj") is None
+
+        await _return_session("proj", "session-a")
+        await _return_session("proj", "session-b")
+
+        first = await _borrow_session("proj")
+        second = await _borrow_session("proj")
+        assert {first, second} == {"session-a", "session-b"}
+        assert await _borrow_session("proj") is None
+    finally:
+        clear_session_pool()
+
+
+async def test_a_finished_pass_returns_its_session_to_the_pool():
+    from app.agents.runtime.claude_code import _borrow_session, clear_session_pool
+
+    clear_session_pool()
+    try:
+        envelope = json.dumps({"session_id": "s-123", "result": json.dumps(BRIEF)})
+        runtime = _claude_code(lambda prompt: _echo(envelope))
+        runtime.reuse_sessions = True
+
+        result = await runtime.run(
+            Profile(), {"task": "project_brief", "instruction": "plan", "session_pool": "proj"}, CONTEXT
+        )
+        assert result.status == "succeeded"
+        assert await _borrow_session("proj") == "s-123"
+    finally:
+        clear_session_pool()
+
+
+async def test_pooling_is_off_unless_enabled():
+    from app.agents.runtime.claude_code import _borrow_session, clear_session_pool
+
+    clear_session_pool()
+    try:
+        envelope = json.dumps({"session_id": "s-999", "result": json.dumps(BRIEF)})
+        runtime = _claude_code(lambda prompt: _echo(envelope))
+        runtime.reuse_sessions = False
+
+        await runtime.run(
+            Profile(), {"task": "project_brief", "instruction": "plan", "session_pool": "proj"}, CONTEXT
+        )
+        assert await _borrow_session("proj") is None
+    finally:
+        clear_session_pool()
+
+
+def test_resume_and_tool_flags_are_both_passed():
+    """--resume must not displace the read-only constraint."""
+    import inspect
+
+    from app.agents.runtime import claude_code as module
+
+    source = inspect.getsource(module.ClaudeCodeRuntime._invoke)
+    assert "*resume_flags" in source
+    assert "*self.tool_flags" in source

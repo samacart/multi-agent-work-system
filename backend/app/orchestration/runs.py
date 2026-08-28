@@ -63,7 +63,13 @@ async def execute_run(
     model = schema_for(task)
     runtime = get_runtime()
 
-    payload = {"task": task, "instruction": instruction, "system_prompt": profile.system_prompt}
+    payload = {
+        "task": task,
+        "instruction": instruction,
+        "system_prompt": profile.system_prompt,
+        # Passes for the same project can share a warm session pool.
+        "session_pool": str(project_id) if project_id else "",
+    }
     run = AgentRun(
         project_id=project_id,
         task_id=task_id,

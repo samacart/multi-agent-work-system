@@ -123,11 +123,25 @@ async def run_planning(
 async def run_sdlc(
     project_id: uuid.UUID,
     response: Response,
-    mode: str = Query(default="sync", pattern="^(async|sync)$"),
+    mode: str = Query(
+        default="async",
+        pattern="^(async|sync)$",
+        description="Defaults to async: a full run takes minutes to tens of minutes, and a "
+        "synchronous request that long dies on any client disconnect, stranding the project "
+        "mid-run. Use sync only for short runs or debugging.",
+    ),
     session: AsyncSession = Depends(get_session),
 ) -> dict:
     """Run the SDLC loop over the project's planned tasks."""
     await _get_project_or_404(session, project_id)
+
+    # Validate before queueing: an unplanned project should be refused here,
+    # not fail inside the worker where nobody is watching.
+    has_tasks = (
+        await session.execute(select(func.count()).select_from(Task).where(Task.project_id == project_id))
+    ).scalar_one()
+    if not has_tasks:
+        raise HTTPException(status_code=409, detail="Project has no tasks. Run planning first.")
 
     if mode == "async":
         try:

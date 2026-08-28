@@ -47,6 +47,14 @@ class Settings(BaseSettings):
     # reading. Enabling writes should be a deliberate act, ideally against a
     # throwaway git worktree rather than a working tree.
     claude_code_disallowed_tools: str = "Edit,Write,MultiEdit,NotebookEdit,Bash"
+    # Independent tasks in the same dependency wave run concurrently. Each pass
+    # is a whole agent invocation, so this is the difference between a run
+    # taking ten minutes and taking fifty.
+    sdlc_max_parallel_tasks: int = 3
+    # Reuse Claude Code sessions across passes so the repository is not
+    # re-explored from cold each time. Off by default: the benefit is real but
+    # unmeasured, and a reused session carries prior context into a later pass.
+    claude_code_reuse_sessions: bool = False
     claude_code_allowed_tools: str = ""
 
     # Ingestion is restricted to paths under these roots.

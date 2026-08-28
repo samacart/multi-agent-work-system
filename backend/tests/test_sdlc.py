@@ -299,3 +299,110 @@ async def test_the_final_summary_records_the_run_notes(session, project):
     for note in result.notes:
         assert note in final.content
     assert "_none_" not in final.content.split("## Run notes")[1]
+
+
+# --- concurrency ---
+
+
+def test_waves_group_independent_work_together():
+    """A security review and a QA strategy do not depend on each other; running
+    them one after the other wastes a whole agent invocation of wall clock."""
+    from app.orchestration.sdlc import order_waves
+
+    a = _task("a")
+    b = _task("b", ["a"])
+    c = _task("c", ["a"])
+    d = _task("d", ["b", "c"])
+
+    waves = [[t.title for t in wave] for wave in order_waves([d, c, b, a])]
+    assert waves == [["a"], ["c", "b"], ["d"]] or waves == [["a"], ["b", "c"], ["d"]]
+
+
+def test_waves_still_terminate_on_a_cycle():
+    from app.orchestration.sdlc import order_waves
+
+    a, b = _task("a", ["b"]), _task("b", ["a"])
+    waves = order_waves([a, b])
+    assert sum(len(w) for w in waves) == 2
+
+
+def test_ordering_is_unchanged_by_the_wave_refactor():
+    a, b, c = _task("a"), _task("b", ["a"]), _task("c", ["b"])
+    assert [t.title for t in order_tasks([c, b, a])] == ["a", "b", "c"]
+
+
+async def test_independent_tasks_in_a_wave_run_concurrently(session, project):
+    """The point of the refactor: proven by overlap, not by wall-clock timing."""
+    import asyncio as aio
+
+    from app.agents.runtime.base import AgentRunResult, AgentRuntime
+    from app.agents.runtime.mock import MockAgentRuntime
+
+    await _clear_approvals(session, project)
+
+    active = 0
+    peak = 0
+
+    class SlowRuntime(AgentRuntime):
+        name = "slow"
+
+        async def run(self, agent_profile, input, context=None):  # noqa: ANN001
+            nonlocal active, peak
+            active += 1
+            peak = max(peak, active)
+            try:
+                await aio.sleep(0.05)
+                return await MockAgentRuntime().run(agent_profile, input, context)
+            finally:
+                active -= 1
+
+    import app.orchestration.runs as runs_module
+
+    original = runs_module.get_runtime
+    runs_module.get_runtime = lambda: SlowRuntime()
+    try:
+        result = await run_project(session, project.id)
+    finally:
+        runs_module.get_runtime = original
+
+    assert result.tasks_run > 0
+    assert peak > 1, "independent tasks in a wave should overlap"
+    assert isinstance(AgentRunResult(status="succeeded"), AgentRunResult)
+
+
+async def test_concurrency_respects_the_configured_limit(session, project, monkeypatch):
+    import asyncio as aio
+
+    from app.agents.runtime.base import AgentRuntime
+    from app.agents.runtime.mock import MockAgentRuntime
+    from app.config import get_settings
+
+    await _clear_approvals(session, project)
+    monkeypatch.setattr(get_settings(), "sdlc_max_parallel_tasks", 2)
+
+    active = 0
+    peak = 0
+
+    class SlowRuntime(AgentRuntime):
+        name = "slow"
+
+        async def run(self, agent_profile, input, context=None):  # noqa: ANN001
+            nonlocal active, peak
+            active += 1
+            peak = max(peak, active)
+            try:
+                await aio.sleep(0.05)
+                return await MockAgentRuntime().run(agent_profile, input, context)
+            finally:
+                active -= 1
+
+    import app.orchestration.runs as runs_module
+
+    original = runs_module.get_runtime
+    runs_module.get_runtime = lambda: SlowRuntime()
+    try:
+        await run_project(session, project.id)
+    finally:
+        runs_module.get_runtime = original
+
+    assert peak <= 2
