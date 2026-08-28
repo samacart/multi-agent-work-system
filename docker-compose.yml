@@ -46,6 +46,9 @@ services:
       GITHUB_ALLOW_UNAUTHENTICATED: ${GITHUB_ALLOW_UNAUTHENTICATED:-false}
       GITHUB_ALLOW_WRITES: ${GITHUB_ALLOW_WRITES:-false}
       EMBEDDING_MODEL: ${EMBEDDING_MODEL:-text-embedding-3-small}
+      EMBEDDING_PROVIDER: ${EMBEDDING_PROVIDER:-hash}
+      # Ollama runs on the host; from inside a container it is host.docker.internal.
+      OLLAMA_BASE_URL: ${CONTAINER_OLLAMA_BASE_URL:-http://host.docker.internal:11434}
       EMBEDDING_DIM: ${EMBEDDING_DIM:-1536}
       DEFAULT_AGENT_MODEL: ${DEFAULT_AGENT_MODEL:-claude-sonnet}
       AGENT_RUNTIME: ${AGENT_RUNTIME:-mock}
@@ -97,8 +100,10 @@ services:
       # the anonymous volume keeps the image's node_modules from being shadowed.
       - ./frontend:/app
       - /app/node_modules
-    depends_on:
-      - api
+    # Deliberately no depends_on: the dashboard calls the API from the browser,
+    # not from this container. Depending on it would start a second, competing
+    # API whenever the frontend comes up - which silently breaks host mode,
+    # where the API runs on the host so it can reach the Claude Code CLI.
 
 volumes:
   postgres_data:
