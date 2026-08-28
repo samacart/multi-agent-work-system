@@ -56,7 +56,7 @@ async def test_project_with_unknown_topic_is_rejected(client):
 async def test_planning_populates_the_whole_project(client, seeded):
     project_id = seeded["project"]["id"]
 
-    planned = await client.post(f"/projects/{project_id}/plan")
+    planned = await client.post(f"/projects/{project_id}/plan?gates=false")
     assert planned.status_code == 200
     result = planned.json()
     assert result["status"] == "ready"
@@ -93,7 +93,7 @@ async def test_planning_populates_the_whole_project(client, seeded):
 
 async def test_task_status_transitions_over_the_api(client, seeded):
     project_id = seeded["project"]["id"]
-    await client.post(f"/projects/{project_id}/plan")
+    await client.post(f"/projects/{project_id}/plan?gates=false")
     task = (await client.get(f"/projects/{project_id}/tasks?status=ready")).json()[0]
 
     ok = await client.patch(f"/tasks/{task['id']}", json={"status": "in_progress"})
@@ -114,7 +114,7 @@ async def test_task_status_transitions_over_the_api(client, seeded):
 
 async def test_task_evidence_can_be_attached(client, seeded):
     project_id = seeded["project"]["id"]
-    await client.post(f"/projects/{project_id}/plan")
+    await client.post(f"/projects/{project_id}/plan?gates=false")
     task = (await client.get(f"/projects/{project_id}/tasks")).json()[0]
 
     response = await client.patch(
@@ -148,7 +148,7 @@ async def test_unknown_task_status_filter_is_rejected(client, seeded):
 
 async def test_approval_can_be_answered_once(client, seeded):
     project_id = seeded["project"]["id"]
-    await client.post(f"/projects/{project_id}/plan")
+    await client.post(f"/projects/{project_id}/plan?gates=false")
     approval = (await client.get(f"/projects/{project_id}/approvals")).json()[0]
 
     approved = await client.post(
@@ -194,7 +194,7 @@ async def test_failed_planning_reports_422(client, seeded, monkeypatch):
             return AgentRunResult(status="failed", error="provider unreachable")
 
     monkeypatch.setattr("app.orchestration.runs.get_runtime", lambda: BrokenRuntime())
-    response = await client.post(f"/projects/{seeded['project']['id']}/plan")
+    response = await client.post(f"/projects/{seeded['project']['id']}/plan?gates=false")
     assert response.status_code == 422
     assert response.json()["status"] == "failed"
 
@@ -204,7 +204,7 @@ async def test_failed_planning_reports_422(client, seeded, monkeypatch):
 
 async def test_running_the_sdlc_loop_over_the_api(client, seeded):
     project_id = seeded["project"]["id"]
-    await client.post(f"/projects/{project_id}/plan")
+    await client.post(f"/projects/{project_id}/plan?gates=false")
 
     # A pending gate holds back the roles it governs.
     blocked = (await client.post(f"/projects/{project_id}/run?mode=sync")).json()
@@ -243,7 +243,7 @@ async def test_running_defaults_to_async(client, seeded, monkeypatch):
     """A full run takes tens of minutes; a synchronous request that long dies
     on any client disconnect and strands the project mid-run."""
     project_id = seeded["project"]["id"]
-    await client.post(f"/projects/{project_id}/plan")
+    await client.post(f"/projects/{project_id}/plan?gates=false")
 
     queued: list = []
 

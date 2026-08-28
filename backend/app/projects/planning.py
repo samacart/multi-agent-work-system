@@ -23,7 +23,7 @@ from app.agents.contracts import ArchitecturePlan, DomainContext, ProjectBrief, 
 from app.agents.runtime.base import AgentContext
 from app.approvals.service import record_question, request_approval
 from app.artifacts.service import bullets, upsert_artifact
-from app.db.models import AGENT_ROLES, Decision, Memory, Project, Task, Topic
+from app.db.models import AGENT_ROLES, ApprovalRequest, Artifact, Decision, Memory, Project, Task, Topic
 from app.memory.search import search_memories
 from app.orchestration.runs import AgentRunFailed, execute_run
 
@@ -31,11 +31,33 @@ log = logging.getLogger(__name__)
 
 MEMORY_LIMIT = 40
 
+# Planning in gated stages. Each stage produces something a human can judge and
+# then stops, so a wrong brief is caught before an architecture plan and a task
+# breakdown are built on top of it.
+STAGE_BRIEF = "brief"
+STAGE_ARCHITECTURE = "architecture"
+STAGE_TASKS = "tasks"
+STAGES = (STAGE_BRIEF, STAGE_ARCHITECTURE, STAGE_TASKS)
+
+STAGE_GATES = {
+    STAGE_BRIEF: ("approve_project_brief", "Approve the project brief before the architecture is designed on it"),
+    STAGE_ARCHITECTURE: ("approve_architecture_plan", "Approve the architecture plan before work is broken into tasks"),
+    STAGE_TASKS: ("approve_task_breakdown", "Approve the task breakdown before the SDLC loop runs it"),
+}
+STAGE_ARTIFACTS = {
+    STAGE_BRIEF: "project_brief",
+    STAGE_ARCHITECTURE: "architecture_plan",
+    STAGE_TASKS: "task_breakdown",
+}
+
 
 @dataclass
 class PlanningResult:
     project_id: str
     status: str
+    stage: str | None = None
+    stages_completed: list[str] = field(default_factory=list)
+    awaiting_approval: str | None = None
     memories_used: int = 0
     runs: list[str] = field(default_factory=list)
     tasks_created: int = 0
@@ -49,6 +71,9 @@ class PlanningResult:
         return {
             "project_id": self.project_id,
             "status": self.status,
+            "stage": self.stage,
+            "stages_completed": self.stages_completed,
+            "awaiting_approval": self.awaiting_approval,
             "memories_used": self.memories_used,
             "runs": self.runs,
             "tasks_created": self.tasks_created,
@@ -117,7 +142,39 @@ async def gather_context(
     return context, memories
 
 
-async def plan_project(session: AsyncSession, project_id: uuid.UUID) -> PlanningResult:
+async def _stage_is_approved(session: AsyncSession, project_id: uuid.UUID, stage: str) -> bool:
+    action_type, _summary = STAGE_GATES[stage]
+    approval = (
+        await session.scalars(
+            select(ApprovalRequest)
+            .where(ApprovalRequest.project_id == project_id, ApprovalRequest.action_type == action_type)
+            .order_by(ApprovalRequest.created_at.desc())
+        )
+    ).first()
+    return approval is not None and approval.status == "approved"
+
+
+async def _artifact_exists(session: AsyncSession, project_id: uuid.UUID, artifact_type: str) -> bool:
+    found = (
+        await session.scalars(
+            select(Artifact).where(Artifact.project_id == project_id, Artifact.type == artifact_type)
+        )
+    ).first()
+    return found is not None
+
+
+async def plan_project(
+    session: AsyncSession, project_id: uuid.UUID, use_gates: bool = True
+) -> PlanningResult:
+    """Plan a project, stopping at each stage for human approval.
+
+    Each stage produces one thing a human can judge - the brief, then the
+    architecture plan, then the task breakdown - and stops. A wrong brief gets
+    caught before an architecture plan and a task breakdown are built on it.
+
+    Calling again resumes: stages whose gate is approved are skipped, and the
+    next unapproved stage runs. Pass use_gates=False to run straight through.
+    """
     project = await session.get(Project, project_id)
     if project is None:
         raise PlanningError(f"Project {project_id} not found")
@@ -129,58 +186,102 @@ async def plan_project(session: AsyncSession, project_id: uuid.UUID) -> Planning
     context, memories = await gather_context(session, project)
     result.memories_used = len(memories)
 
+    # Domain context is cheap, produces no artifact, and everything else needs
+    # it - so it is not a gated stage, it just runs.
     try:
         domain = await _run(session, project, context, "domain_expert", "domain_context",
                             "Apply the topic's durable memory to this project.", result)
         context.extra["domain_context"] = domain.model_dump(mode="json")
-
-        brief = await _run(session, project, context, "lead_pm", "project_brief",
-                           "Turn this goal into a scoped project brief.", result)
-        context.extra["project_brief"] = brief.model_dump(mode="json")
-
-        architecture = await _run(session, project, context, "architect", "architecture_plan",
-                                  "Propose the implementation design and call out risks.", result)
-        context.extra["architecture_plan"] = architecture.model_dump(mode="json")
-
-        breakdown = await _run(session, project, context, "lead_pm", "task_breakdown",
-                               "Break this project into tasks with acceptance criteria.", result)
-
-        questions = await _run(session, project, context, "lead_pm", "questions",
-                               "Surface only decisions that need human judgement.", result)
-
-        approvals = await _run(session, project, context, "lead_pm", "approvals",
-                               "Pre-register the gated actions this plan implies.", result)
     except AgentRunFailed as exc:
-        project.status = "blocked"
-        result.status = "failed"
-        result.error = str(exc)
-        await session.commit()
-        log.warning("planning failed for project %s: %s", project.name, exc)
-        return result
+        return await _fail_planning(session, project, result, exc)
 
-    await _write_artifacts(session, project, domain, brief, architecture, breakdown, result)
-    await _sync_tasks(session, project, breakdown, result)
+    brief = architecture = breakdown = None
 
-    for question in questions.questions:
-        if await record_question(session, project.id, question.question, question.why_it_matters):
-            result.questions_created += 1
+    for stage in STAGES:
+        already_done = use_gates and await _stage_is_approved(session, project_id, stage)
+        if already_done and await _artifact_exists(session, project_id, STAGE_ARTIFACTS[stage]):
+            result.stages_completed.append(stage)
+            continue
 
-    for approval in approvals.approvals:
-        _request, created = await request_approval(
-            session,
-            action_type=approval.action_type,
-            action_summary=approval.action_summary,
-            project_id=project.id,
-            risk_level=approval.risk_level,
-        )
-        if created:
-            result.approvals_created += 1
+        result.stage = stage
+        try:
+            if stage == STAGE_BRIEF:
+                brief = await _run(session, project, context, "lead_pm", "project_brief",
+                                   "Turn this goal into a scoped project brief.", result)
+                context.extra["project_brief"] = brief.model_dump(mode="json")
+                project.brief = _brief_markdown(project, brief, domain)
+                await upsert_artifact(session, project.id, "project_brief",
+                                      f"Project brief - {project.name}", project.brief)
 
-    project.brief = _brief_markdown(project, brief, domain)
+            elif stage == STAGE_ARCHITECTURE:
+                architecture = await _run(session, project, context, "architect", "architecture_plan",
+                                          "Propose the implementation design and call out risks.", result)
+                context.extra["architecture_plan"] = architecture.model_dump(mode="json")
+                await upsert_artifact(session, project.id, "architecture_plan",
+                                      f"Architecture plan - {project.name}",
+                                      _architecture_markdown(project, architecture))
+
+            else:
+                breakdown = await _run(session, project, context, "lead_pm", "task_breakdown",
+                                       "Break this project into tasks with acceptance criteria.", result)
+                await upsert_artifact(session, project.id, "task_breakdown",
+                                      f"Task breakdown - {project.name}",
+                                      _breakdown_markdown(project, breakdown))
+                await _sync_tasks(session, project, breakdown, result)
+
+                questions = await _run(session, project, context, "lead_pm", "questions",
+                                       "Surface only decisions that need human judgement.", result)
+                for question in questions.questions:
+                    if await record_question(session, project.id, question.question, question.why_it_matters):
+                        result.questions_created += 1
+
+                approvals = await _run(session, project, context, "lead_pm", "approvals",
+                                       "Pre-register the gated actions this plan implies.", result)
+                for approval in approvals.approvals:
+                    _request, created = await request_approval(
+                        session,
+                        action_type=approval.action_type,
+                        action_summary=approval.action_summary,
+                        project_id=project.id,
+                        risk_level=approval.risk_level,
+                    )
+                    if created:
+                        result.approvals_created += 1
+        except AgentRunFailed as exc:
+            return await _fail_planning(session, project, result, exc)
+
+        result.artifacts.append(STAGE_ARTIFACTS[stage])
+        result.stages_completed.append(stage)
+
+        if use_gates:
+            action_type, summary = STAGE_GATES[stage]
+            await request_approval(
+                session,
+                action_type=action_type,
+                action_summary=f"{summary} ({project.name})",
+                project_id=project.id,
+                risk_level="low",
+            )
+            result.status = "awaiting_approval"
+            result.awaiting_approval = action_type
+            await session.commit()
+            log.info("planning for %s paused after the %s stage", project.name, stage)
+            return result
+
     project.status = "ready"
     result.status = "ready"
+    result.stage = None
     await session.commit()
     log.info("planned project %s: %d tasks, %d questions", project.name, result.tasks_created, result.questions_created)
+    return result
+
+
+async def _fail_planning(session, project, result, exc) -> PlanningResult:  # noqa: ANN001
+    project.status = "blocked"
+    result.status = "failed"
+    result.error = str(exc)
+    await session.commit()
+    log.warning("planning failed for project %s: %s", project.name, exc)
     return result
 
 

@@ -42,7 +42,7 @@ async def project(session) -> Project:
     session.add(project)
     await session.commit()
 
-    await plan_project(session, project.id)
+    await plan_project(session, project.id, use_gates=False)
     return project
 
 
@@ -275,7 +275,7 @@ async def test_a_project_without_a_topic_stores_no_lessons(session):
     project = Project(name="orphan", goal="do a thing")
     session.add(project)
     await session.commit()
-    await plan_project(session, project.id)
+    await plan_project(session, project.id, use_gates=False)
     await _clear_approvals(session, project)
 
     result = await run_project(session, project.id)

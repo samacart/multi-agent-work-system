@@ -51,7 +51,7 @@ async def planned(session):
 
 
 async def test_planning_produces_a_ready_project(session, planned):
-    result = await plan_project(session, planned.id)
+    result = await plan_project(session, planned.id, use_gates=False)
 
     assert result.status == "ready"
     assert result.error is None
@@ -62,7 +62,7 @@ async def test_planning_produces_a_ready_project(session, planned):
 
 
 async def test_every_pass_records_an_agent_run(session, planned):
-    result = await plan_project(session, planned.id)
+    result = await plan_project(session, planned.id, use_gates=False)
 
     runs = (await session.scalars(select(AgentRun).where(AgentRun.project_id == planned.id))).all()
     assert len(runs) == len(result.runs) == 6
@@ -79,7 +79,7 @@ async def test_every_pass_records_an_agent_run(session, planned):
 
 
 async def test_tasks_are_created_with_acceptance_criteria(session, planned):
-    await plan_project(session, planned.id)
+    await plan_project(session, planned.id, use_gates=False)
 
     tasks = (await session.scalars(select(Task).where(Task.project_id == planned.id))).all()
     assert len(tasks) >= 8
@@ -102,13 +102,13 @@ async def test_tasks_are_created_with_acceptance_criteria(session, planned):
 
 
 async def test_high_severity_risks_become_their_own_tasks(session, planned):
-    await plan_project(session, planned.id)
+    await plan_project(session, planned.id, use_gates=False)
     titles = [t.title for t in (await session.scalars(select(Task))).all()]
     assert any(title.startswith("Mitigate risk:") for title in titles)
 
 
 async def test_brief_records_assumptions_risks_and_unknowns(session, planned):
-    await plan_project(session, planned.id)
+    await plan_project(session, planned.id, use_gates=False)
     await session.refresh(planned)
 
     assert "## Assumptions" in planned.brief
@@ -119,7 +119,7 @@ async def test_brief_records_assumptions_risks_and_unknowns(session, planned):
 
 
 async def test_artifacts_are_persisted(session, planned):
-    await plan_project(session, planned.id)
+    await plan_project(session, planned.id, use_gates=False)
 
     artifacts = (await session.scalars(select(Artifact).where(Artifact.project_id == planned.id))).all()
     assert {a.type for a in artifacts} == {"project_brief", "architecture_plan", "task_breakdown"}
@@ -127,7 +127,7 @@ async def test_artifacts_are_persisted(session, planned):
 
 
 async def test_open_questions_reach_the_human_queue(session, planned):
-    await plan_project(session, planned.id)
+    await plan_project(session, planned.id, use_gates=False)
 
     decisions = (await session.scalars(select(Decision).where(Decision.project_id == planned.id))).all()
     assert decisions
@@ -136,7 +136,7 @@ async def test_open_questions_reach_the_human_queue(session, planned):
 
 
 async def test_implied_gated_actions_are_pre_registered(session, planned):
-    await plan_project(session, planned.id)
+    await plan_project(session, planned.id, use_gates=False)
 
     approvals = (await session.scalars(select(ApprovalRequest).where(ApprovalRequest.project_id == planned.id))).all()
     action_types = {a.action_type for a in approvals}
@@ -146,8 +146,8 @@ async def test_implied_gated_actions_are_pre_registered(session, planned):
 
 
 async def test_replanning_sharpens_rather_than_duplicates(session, planned):
-    first = await plan_project(session, planned.id)
-    second = await plan_project(session, planned.id)
+    first = await plan_project(session, planned.id, use_gates=False)
+    second = await plan_project(session, planned.id, use_gates=False)
 
     assert second.tasks_created == 0
     assert second.tasks_updated == first.tasks_created
@@ -160,12 +160,12 @@ async def test_replanning_sharpens_rather_than_duplicates(session, planned):
 
 
 async def test_replanning_does_not_undo_started_work(session, planned):
-    await plan_project(session, planned.id)
+    await plan_project(session, planned.id, use_gates=False)
     task = (await session.scalars(select(Task).where(Task.status == "ready"))).first()
     task.status = "in_progress"
     await session.commit()
 
-    await plan_project(session, planned.id)
+    await plan_project(session, planned.id, use_gates=False)
     await session.refresh(task)
     assert task.status == "in_progress"
 
@@ -176,7 +176,7 @@ async def test_planning_without_a_topic_still_works(session):
     session.add(project)
     await session.commit()
 
-    result = await plan_project(session, project.id)
+    result = await plan_project(session, project.id, use_gates=False)
 
     assert result.status == "ready"
     assert result.memories_used == 0
@@ -195,7 +195,7 @@ async def test_a_failing_runtime_blocks_the_project(session, planned, monkeypatc
             return AgentRunResult(status="failed", error="model provider unreachable")
 
     monkeypatch.setattr("app.orchestration.runs.get_runtime", lambda: BrokenRuntime())
-    result = await plan_project(session, planned.id)
+    result = await plan_project(session, planned.id, use_gates=False)
 
     assert result.status == "failed"
     assert "model provider unreachable" in result.error
@@ -217,7 +217,7 @@ async def test_output_violating_the_contract_fails_the_run(session, planned, mon
             return AgentRunResult(status="succeeded", output={"not": "the right shape"})
 
     monkeypatch.setattr("app.orchestration.runs.get_runtime", lambda: SloppyRuntime())
-    result = await plan_project(session, planned.id)
+    result = await plan_project(session, planned.id, use_gates=False)
 
     assert result.status == "failed"
     assert "did not match the domain_context contract" in result.error
@@ -261,11 +261,11 @@ async def test_a_human_answer_becomes_a_stated_assumption(session, planned):
     from app.approvals.service import answer_question
     from app.db.models import Artifact, Decision
 
-    await plan_project(session, planned.id)
+    await plan_project(session, planned.id, use_gates=False)
     decision = (await session.scalars(sa_select(Decision))).first()
     await answer_question(session, decision.id, "The growth team owns it", decided_by="sam")
 
-    await plan_project(session, planned.id)
+    await plan_project(session, planned.id, use_gates=False)
 
     brief = (
         await session.scalars(sa_select(Artifact).where(Artifact.type == "project_brief"))
@@ -279,12 +279,146 @@ async def test_an_answered_question_is_not_asked_again(session, planned):
     from app.approvals.service import answer_question
     from app.db.models import Decision
 
-    await plan_project(session, planned.id)
+    await plan_project(session, planned.id, use_gates=False)
     decisions = (await session.scalars(sa_select(Decision))).all()
     for decision in decisions:
         await answer_question(session, decision.id, "settled", decided_by="sam")
 
-    await plan_project(session, planned.id)
+    await plan_project(session, planned.id, use_gates=False)
 
     reopened = [d for d in (await session.scalars(sa_select(Decision))).all() if not d.answer]
     assert reopened == []
+
+
+# --- stage gating ---
+
+
+async def _approve(session, project_id, action_type):
+    from sqlalchemy import select as sa_select
+
+    from app.approvals.service import respond_to_approval
+    from app.db.models import ApprovalRequest
+
+    approval = (
+        await session.scalars(
+            sa_select(ApprovalRequest).where(
+                ApprovalRequest.project_id == project_id, ApprovalRequest.action_type == action_type
+            )
+        )
+    ).one()
+    await respond_to_approval(session, approval.id, "approved")
+
+
+async def test_planning_stops_after_the_brief_for_approval(session, planned):
+    """A wrong brief should be caught before an architecture plan and a task
+    breakdown are built on top of it."""
+    from sqlalchemy import select as sa_select
+
+    from app.db.models import Artifact, Task
+
+    result = await plan_project(session, planned.id)
+
+    assert result.status == "awaiting_approval"
+    assert result.stage == "brief"
+    assert result.awaiting_approval == "approve_project_brief"
+    assert result.stages_completed == ["brief"]
+
+    types = {a.type for a in (await session.scalars(sa_select(Artifact))).all()}
+    assert types == {"project_brief"}
+    assert (await session.scalars(sa_select(Task))).all() == []
+
+    await session.refresh(planned)
+    assert planned.status == "planning"
+    assert planned.brief
+
+
+async def test_approving_a_stage_lets_the_next_one_run(session, planned):
+    from sqlalchemy import select as sa_select
+
+    from app.db.models import Artifact
+
+    await plan_project(session, planned.id)
+    await _approve(session, planned.id, "approve_project_brief")
+
+    second = await plan_project(session, planned.id)
+
+    assert second.stage == "architecture"
+    assert second.awaiting_approval == "approve_architecture_plan"
+    assert second.stages_completed == ["brief", "architecture"]
+
+    types = {a.type for a in (await session.scalars(sa_select(Artifact))).all()}
+    assert types == {"project_brief", "architecture_plan"}
+
+
+async def test_the_full_gated_sequence_reaches_ready(session, planned):
+    from sqlalchemy import select as sa_select
+
+    from app.db.models import Artifact, Task
+
+    await plan_project(session, planned.id)
+    await _approve(session, planned.id, "approve_project_brief")
+    await plan_project(session, planned.id)
+    await _approve(session, planned.id, "approve_architecture_plan")
+    third = await plan_project(session, planned.id)
+
+    assert third.stage == "tasks"
+    assert third.tasks_created > 0
+    assert third.questions_created > 0
+
+    await _approve(session, planned.id, "approve_task_breakdown")
+    final = await plan_project(session, planned.id)
+
+    assert final.status == "ready"
+    assert final.stage is None
+    assert final.stages_completed == ["brief", "architecture", "tasks"]
+
+    types = {a.type for a in (await session.scalars(sa_select(Artifact))).all()}
+    assert types == {"project_brief", "architecture_plan", "task_breakdown"}
+    assert (await session.scalars(sa_select(Task))).all()
+
+    await session.refresh(planned)
+    assert planned.status == "ready"
+
+
+async def test_an_approved_stage_is_not_re_run(session, planned):
+    from sqlalchemy import select as sa_select
+
+    from app.db.models import AgentRun
+
+    await plan_project(session, planned.id)
+    await _approve(session, planned.id, "approve_project_brief")
+    runs_after_brief = len((await session.scalars(sa_select(AgentRun))).all())
+
+    await plan_project(session, planned.id)
+    runs_after_architecture = len((await session.scalars(sa_select(AgentRun))).all())
+
+    # Domain context plus one architecture pass - the brief is not redone.
+    assert runs_after_architecture - runs_after_brief == 2
+
+
+async def test_gates_can_be_skipped_for_a_straight_through_plan(session, planned):
+    result = await plan_project(session, planned.id, use_gates=False)
+
+    assert result.status == "ready"
+    assert result.awaiting_approval is None
+    assert result.stages_completed == ["brief", "architecture", "tasks"]
+    assert result.tasks_created > 0
+
+
+async def test_the_gated_flow_over_the_api(client, session):
+    from app.db.seed import seed_agent_profiles
+
+    await seed_agent_profiles(session)
+    project = (await client.post("/projects", json={"name": "gated", "goal": "ship it"})).json()
+
+    first = (await client.post(f"/projects/{project['id']}/plan")).json()
+    assert first["status"] == "awaiting_approval"
+    assert first["awaiting_approval"] == "approve_project_brief"
+
+    approvals = (await client.get(f"/projects/{project['id']}/approvals")).json()
+    gate = next(a for a in approvals if a["action_type"] == "approve_project_brief")
+    assert gate["risk_level"] == "low"
+
+    await client.post(f"/approvals/{gate['id']}/respond", json={"status": "approved"})
+    second = (await client.post(f"/projects/{project['id']}/plan")).json()
+    assert second["stage"] == "architecture"

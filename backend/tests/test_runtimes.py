@@ -396,7 +396,7 @@ async def test_planning_runs_end_to_end_on_a_non_mock_runtime(session):
     original = runs_module.get_runtime
     runs_module.get_runtime = lambda: runtime
     try:
-        result = await plan_project(session, project.id)
+        result = await plan_project(session, project.id, use_gates=False)
     finally:
         runs_module.get_runtime = original
 

@@ -105,11 +105,18 @@ async def get_project(project_id: uuid.UUID, session: AsyncSession = Depends(get
 
 @router.post("/projects/{project_id}/plan")
 async def run_planning(
-    project_id: uuid.UUID, response: Response, session: AsyncSession = Depends(get_session)
+    project_id: uuid.UUID,
+    response: Response,
+    gates: bool = Query(
+        default=True,
+        description="Stop after each stage (brief, architecture, tasks) for approval. "
+        "Call again to resume once the stage's gate is approved. Set false to plan straight through.",
+    ),
+    session: AsyncSession = Depends(get_session),
 ) -> dict:
     await _get_project_or_404(session, project_id)
     try:
-        result = await plan_project(session, project_id)
+        result = await plan_project(session, project_id, use_gates=gates)
     except PlanningError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
 
