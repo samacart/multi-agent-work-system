@@ -316,6 +316,20 @@ def _approvals(context: AgentContext) -> dict[str, Any]:
     return {"approvals": approvals}
 
 
+def _approval_briefing(context: AgentContext) -> dict[str, Any]:
+    artifact = str(context.extra.get("artifact_under_review") or "")
+    stage = str(context.extra.get("stage") or "this stage")
+    risks = _contents(context, *_RISKY, limit=4)
+    return {
+        "summary": f"{stage} artifact for {_project_name(context)}, {len(artifact)} characters.",
+        "recommendation": "revise" if not artifact else "approve_with_changes",
+        "rationale": "The mock runtime does not read the artifact; it cannot judge it.",
+        "key_points": [line.lstrip("# ").strip() for line in artifact.splitlines() if line.startswith("## ")][:8],
+        "concerns": risks,
+        "contradicts_earlier_stage": [],
+    }
+
+
 def _task_outcome(context: AgentContext) -> dict[str, Any]:
     """A task pass by a role with no dedicated report.
 
@@ -459,6 +473,7 @@ def _release_summary(context: AgentContext) -> dict[str, Any]:
 
 _GENERATORS = {
     "task_outcome": _task_outcome,
+    "approval_briefing": _approval_briefing,
     "domain_context": _domain_context,
     "project_brief": _project_brief,
     "architecture_plan": _architecture_plan,

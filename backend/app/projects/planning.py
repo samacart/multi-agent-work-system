@@ -44,6 +44,14 @@ STAGE_GATES = {
     STAGE_ARCHITECTURE: ("approve_architecture_plan", "Approve the architecture plan before work is broken into tasks"),
     STAGE_TASKS: ("approve_task_breakdown", "Approve the task breakdown before the SDLC loop runs it"),
 }
+# Who reviews each stage. Never the role that wrote it: an agent recommending
+# its own work is not a review. The architect reviewing the task breakdown is
+# the pairing that catches a breakdown drifting from the plan it came from.
+STAGE_REVIEWERS = {
+    STAGE_BRIEF: "domain_expert",
+    STAGE_ARCHITECTURE: "code_reviewer",
+    STAGE_TASKS: "architect",
+}
 STAGE_ARTIFACTS = {
     STAGE_BRIEF: "project_brief",
     STAGE_ARCHITECTURE: "architecture_plan",
@@ -232,7 +240,17 @@ async def plan_project(
                 questions = await _run(session, project, context, "lead_pm", "questions",
                                        "Surface only decisions that need human judgement.", result)
                 for question in questions.questions:
-                    if await record_question(session, project.id, question.question, question.why_it_matters):
+                    recorded = await record_question(
+                        session,
+                        project.id,
+                        question.question,
+                        question.why_it_matters,
+                        metadata={
+                            "options": question.options,
+                            "recommendation": question.recommendation,
+                        },
+                    )
+                    if recorded:
                         result.questions_created += 1
 
                 approvals = await _run(session, project, context, "lead_pm", "approvals",
@@ -255,13 +273,17 @@ async def plan_project(
 
         if use_gates:
             action_type, summary = STAGE_GATES[stage]
-            await request_approval(
+            approval, _created = await request_approval(
                 session,
                 action_type=action_type,
                 action_summary=f"{summary} ({project.name})",
                 project_id=project.id,
                 risk_level="low",
             )
+            approval.metadata_json = await _brief_the_human(
+                session, project, context, stage, result
+            )
+            await session.commit()
             result.status = "awaiting_approval"
             result.awaiting_approval = action_type
             await session.commit()
@@ -274,6 +296,61 @@ async def plan_project(
     await session.commit()
     log.info("planned project %s: %d tasks, %d questions", project.name, result.tasks_created, result.questions_created)
     return result
+
+
+async def _brief_the_human(
+    session: AsyncSession, project: Project, context: AgentContext, stage: str, result: PlanningResult
+) -> dict:
+    """A second opinion on the artifact, from a role that did not write it.
+
+    Best effort: a briefing that cannot be produced must not block the gate -
+    the human can still read the artifact themselves.
+    """
+    artifact = (
+        await session.scalars(
+            select(Artifact).where(
+                Artifact.project_id == project.id, Artifact.type == STAGE_ARTIFACTS[stage]
+            )
+        )
+    ).first()
+    if artifact is None:
+        return {}
+
+    earlier = [
+        a.type
+        for a in (await session.scalars(select(Artifact).where(Artifact.project_id == project.id))).all()
+        if a.type != STAGE_ARTIFACTS[stage]
+    ]
+    review_context = AgentContext(
+        project_id=str(project.id),
+        memories=context.memories,
+        extra={
+            **context.extra,
+            "stage": stage,
+            "artifact_under_review": artifact.content,
+            "earlier_approved_artifacts": earlier,
+        },
+    )
+    try:
+        outcome = await execute_run(
+            session,
+            role=STAGE_REVIEWERS[stage],
+            task="approval_briefing",
+            instruction=(
+                f"A human is about to approve the {STAGE_ARTIFACTS[stage]} for this project. "
+                f"Summarise what it commits to, recommend approve / approve_with_changes / revise, "
+                f"and say plainly what would make that the wrong call. Flag anything that contradicts "
+                f"an earlier approved artifact."
+            ),
+            context=review_context,
+            project_id=project.id,
+        )
+    except AgentRunFailed as exc:
+        log.warning("approval briefing failed for %s: %s", stage, exc)
+        return {"briefing_error": str(exc)}
+
+    result.runs.append(str(outcome.run.id))
+    return {"briefing": outcome.output.model_dump(mode="json"), "reviewed_by": STAGE_REVIEWERS[stage]}
 
 
 async def _fail_planning(session, project, result, exc) -> PlanningResult:  # noqa: ANN001

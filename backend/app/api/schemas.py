@@ -198,6 +198,7 @@ class ApprovalOut(BaseModel):
     risk_level: str
     status: str
     response: str | None
+    metadata_json: dict
     created_at: datetime
     updated_at: datetime
 
@@ -229,4 +230,5 @@ class DecisionOut(BaseModel):
     answer: str | None
     rationale: str | None
     decided_by: str | None
+    metadata_json: dict
     created_at: datetime

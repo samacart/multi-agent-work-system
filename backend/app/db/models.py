@@ -232,6 +232,9 @@ class Decision(Base):
     answer: Mapped[str | None] = mapped_column(sa.Text())
     rationale: Mapped[str | None] = mapped_column(sa.Text())
     decided_by: Mapped[str | None] = mapped_column(sa.String(255))
+    # The options an agent offered and which one it recommends. A question
+    # handed over without a view is work passed back, not a decision surfaced.
+    metadata_json: Mapped[dict] = mapped_column(JSONType, default=dict, nullable=False)
     created_at: Mapped[datetime] = created_column()
 
 
@@ -247,6 +250,8 @@ class ApprovalRequest(Base):
     status: Mapped[str] = mapped_column(enum_column("approval_status", APPROVAL_STATUSES), default="pending", nullable=False)
     requested_by_agent_id: Mapped[uuid.UUID | None] = mapped_column(sa.ForeignKey("agent_profiles.id", ondelete="SET NULL"))
     response: Mapped[str | None] = mapped_column(sa.Text())
+    # A briefing on what is being approved: summary, recommendation, concerns.
+    metadata_json: Mapped[dict] = mapped_column(JSONType, default=dict, nullable=False)
     created_at: Mapped[datetime] = created_column()
     updated_at: Mapped[datetime] = updated_column()
 

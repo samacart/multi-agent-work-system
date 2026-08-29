@@ -392,8 +392,9 @@ async def test_an_approved_stage_is_not_re_run(session, planned):
     await plan_project(session, planned.id)
     runs_after_architecture = len((await session.scalars(sa_select(AgentRun))).all())
 
-    # Domain context plus one architecture pass - the brief is not redone.
-    assert runs_after_architecture - runs_after_brief == 2
+    # Domain context, the architecture pass, and the briefing that reviews it -
+    # the brief itself is not redone.
+    assert runs_after_architecture - runs_after_brief == 3
 
 
 async def test_gates_can_be_skipped_for_a_straight_through_plan(session, planned):
@@ -422,3 +423,82 @@ async def test_the_gated_flow_over_the_api(client, session):
     await client.post(f"/approvals/{gate['id']}/respond", json={"status": "approved"})
     second = (await client.post(f"/projects/{project['id']}/plan")).json()
     assert second["stage"] == "architecture"
+
+
+# --- a decision handed over should come with a view ---
+
+
+async def test_a_stage_gate_carries_a_briefing_from_another_role(session, planned):
+    """An agent recommending its own work is not a review."""
+    from sqlalchemy import select as sa_select
+
+    from app.db.models import ApprovalRequest
+    from app.projects.planning import STAGE_REVIEWERS
+
+    await plan_project(session, planned.id)
+
+    gate = (
+        await session.scalars(
+            sa_select(ApprovalRequest).where(ApprovalRequest.action_type == "approve_project_brief")
+        )
+    ).one()
+
+    assert gate.metadata_json.get("reviewed_by") == STAGE_REVIEWERS["brief"] == "domain_expert"
+    briefing = gate.metadata_json["briefing"]
+    assert briefing["summary"]
+    assert briefing["recommendation"] in {"approve", "approve_with_changes", "revise"}
+    assert "key_points" in briefing
+
+
+async def test_the_task_breakdown_is_reviewed_by_the_architect(session, planned):
+    """The pairing that catches a breakdown drifting from the plan it came from
+    - which is exactly what happened on a real project."""
+    from app.projects.planning import STAGE_REVIEWERS
+
+    assert STAGE_REVIEWERS["tasks"] == "architect"
+    assert STAGE_REVIEWERS["architecture"] != "architect"
+    assert STAGE_REVIEWERS["brief"] != "lead_pm"
+
+
+async def test_questions_carry_their_options_and_recommendation(session, planned):
+    from sqlalchemy import select as sa_select
+
+    from app.db.models import Decision
+
+    await plan_project(session, planned.id, use_gates=False)
+
+    decisions = (await session.scalars(sa_select(Decision))).all()
+    assert decisions
+    with_view = [d for d in decisions if d.metadata_json.get("recommendation")]
+    assert with_view, "no question offered a recommendation"
+    assert with_view[0].metadata_json["options"]
+
+
+async def test_a_failed_briefing_does_not_block_the_gate(session, planned, monkeypatch):
+    """The human can still read the artifact themselves."""
+    from sqlalchemy import select as sa_select
+
+    from app.agents.runtime.base import AgentRunResult, AgentRuntime
+    from app.agents.runtime.mock import MockAgentRuntime
+    from app.db.models import ApprovalRequest
+
+    class NoBriefings(AgentRuntime):
+        name = "no-briefings"
+
+        async def run(self, agent_profile, input, context=None):  # noqa: ANN001
+            if input.get("task") == "approval_briefing":
+                return AgentRunResult(status="failed", error="briefing unavailable")
+            return await MockAgentRuntime().run(agent_profile, input, context)
+
+    import app.orchestration.runs as runs_module
+
+    original = runs_module.get_runtime
+    runs_module.get_runtime = lambda: NoBriefings()
+    try:
+        result = await plan_project(session, planned.id)
+    finally:
+        runs_module.get_runtime = original
+
+    assert result.status == "awaiting_approval"
+    gate = (await session.scalars(sa_select(ApprovalRequest).where(ApprovalRequest.action_type == "approve_project_brief"))).one()
+    assert "briefing_error" in gate.metadata_json

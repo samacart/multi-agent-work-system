@@ -142,6 +142,7 @@ async def record_question(
     project_id: uuid.UUID,
     question: str,
     rationale: str | None = None,
+    metadata: dict | None = None,
 ) -> Decision | None:
     """Queue a question for a human. Returns None if it is already queued."""
     existing = (
@@ -152,7 +153,11 @@ async def record_question(
     if existing is not None:
         return None
 
-    decision = Decision(project_id=project_id, question=question, rationale=rationale)
+    # The options considered and which is recommended: a question handed over
+    # without a view is work passed back, not a decision surfaced.
+    decision = Decision(
+        project_id=project_id, question=question, rationale=rationale, metadata_json=metadata or {}
+    )
     session.add(decision)
     await session.commit()
     return decision

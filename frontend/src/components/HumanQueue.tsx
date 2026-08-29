@@ -4,6 +4,7 @@ import {
   APPROVAL_ARTIFACT,
   GATED_ROLES,
   type Approval,
+  type ApprovalBriefing,
   type Artifact,
   type Decision,
   type Task,
@@ -11,6 +12,49 @@ import {
 import Markdown from './Markdown'
 import ProjectPicker from './ProjectPicker'
 import { useProjects } from '../lib/useProjects'
+
+function Briefing({ briefing, reviewedBy }: { briefing: ApprovalBriefing; reviewedBy?: string }) {
+  const tone =
+    briefing.recommendation === 'approve'
+      ? 'rec rec-approve'
+      : briefing.recommendation === 'revise'
+        ? 'rec rec-revise'
+        : 'rec rec-changes'
+
+  return (
+    <div className="briefing">
+      <div>
+        <span className={tone}>{briefing.recommendation.replace(/_/g, ' ')}</span>
+        {reviewedBy ? <span className="muted"> — reviewed by {reviewedBy.replace(/_/g, ' ')}</span> : null}
+      </div>
+      <p>{briefing.summary}</p>
+      {briefing.rationale ? <p className="muted">{briefing.rationale}</p> : null}
+      {briefing.contradicts_earlier_stage?.length ? (
+        <div className="error">
+          Contradicts an earlier approved stage:
+          <ul className="checklist">
+            {briefing.contradicts_earlier_stage.map((c) => (
+              <li key={c}>{c}</li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
+      {briefing.concerns?.length ? (
+        <div>
+          <strong>What would make this the wrong call</strong>
+          <ul className="checklist">
+            {briefing.concerns.map((c) => (
+              <li key={c}>{c}</li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
+      {briefing.key_points?.length ? (
+        <div className="muted">Covers: {briefing.key_points.join(' · ')}</div>
+      ) : null}
+    </div>
+  )
+}
 
 export default function HumanQueue() {
   const { projects, selected, setSelected, error: listError } = useProjects()
@@ -125,6 +169,14 @@ export default function HumanQueue() {
                         </td>
                         <td>
                           {approval.action_summary}
+                          {approval.metadata_json?.briefing ? (
+                            <Briefing
+                              briefing={approval.metadata_json.briefing}
+                              reviewedBy={approval.metadata_json.reviewed_by}
+                            />
+                          ) : approval.metadata_json?.briefing_error ? (
+                            <div className="muted">No briefing available — read the artifact yourself.</div>
+                          ) : null}
                           {artifact ? (
                             <div>
                               <button
@@ -190,8 +242,28 @@ export default function HumanQueue() {
               <tbody>
                 {open.map((decision) => (
                   <tr key={decision.id}>
-                    <td>{decision.question}</td>
-                    <td className="muted">{decision.rationale}</td>
+                    <td>
+                      {decision.question}
+                      {decision.metadata_json?.options?.length ? (
+                        <ul className="checklist">
+                          {decision.metadata_json.options.map((o) => (
+                            <li key={o}>
+                              {o}
+                              {o === decision.metadata_json?.recommendation ? (
+                                <span className="rec-inline"> ← recommended</span>
+                              ) : null}
+                            </li>
+                          ))}
+                        </ul>
+                      ) : null}
+                    </td>
+                    <td className="muted">
+                      {decision.rationale}
+                      {decision.metadata_json?.recommendation &&
+                      !decision.metadata_json?.options?.includes(decision.metadata_json.recommendation) ? (
+                        <div className="rec-inline">Recommended: {decision.metadata_json.recommendation}</div>
+                      ) : null}
+                    </td>
                     <td>
                       <div className="row-form">
                         <input

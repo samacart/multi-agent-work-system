@@ -239,3 +239,15 @@ code { color: var(--accent); }
 /* Task-list checkboxes appear throughout the task breakdown and PR checklists. */
 .md input[type='checkbox'] { margin-right: 7px; accent-color: var(--accent); }
 .md li:has(> input[type='checkbox']) { list-style: none; margin-left: -18px; }
+
+/* --- recommendations on the human queue --- */
+
+.briefing { margin: 8px 0 4px; padding: 10px 12px; border: 1px solid var(--border); border-left: 2px solid var(--accent); border-radius: 3px; background: var(--bg); }
+.briefing p { margin: 6px 0; }
+.briefing strong { font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); }
+
+.rec { display: inline-block; padding: 2px 8px; border-radius: 3px; font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.06em; }
+.rec-approve { background: rgba(63,185,80,0.15); color: var(--ok); border: 1px solid var(--ok); }
+.rec-changes { background: rgba(110,168,254,0.12); color: var(--accent); border: 1px solid var(--accent); }
+.rec-revise  { background: rgba(248,81,73,0.12); color: var(--bad); border: 1px solid var(--bad); }
+.rec-inline { color: var(--ok); font-size: 11px; }

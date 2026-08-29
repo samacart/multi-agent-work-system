@@ -201,6 +201,15 @@ export type Artifact = {
   created_at: string
 }
 
+export type ApprovalBriefing = {
+  summary: string
+  recommendation: 'approve' | 'approve_with_changes' | 'revise' | string
+  rationale: string
+  key_points: string[]
+  concerns: string[]
+  contradicts_earlier_stage: string[]
+}
+
 export type Approval = {
   id: string
   project_id: string | null
@@ -210,6 +219,7 @@ export type Approval = {
   risk_level: 'low' | 'medium' | 'high'
   status: 'pending' | 'approved' | 'rejected' | 'cancelled'
   response: string | null
+  metadata_json: { briefing?: ApprovalBriefing; reviewed_by?: string; briefing_error?: string }
   created_at: string
   updated_at: string
 }
@@ -234,6 +244,7 @@ export type Decision = {
   answer: string | null
   rationale: string | null
   decided_by: string | null
+  metadata_json: { options?: string[]; recommendation?: string | null }
   created_at: string
 }
 

@@ -92,6 +92,26 @@ class ApprovalSet(BaseModel):
     approvals: list[ApprovalSpec] = Field(default_factory=list)
 
 
+class ApprovalBriefing(BaseModel):
+    """A second opinion on something a human is being asked to approve.
+
+    Written by a role other than the one that produced the artifact - an agent
+    recommending its own work is not a review.
+    """
+
+    summary: str = Field(description="What this artifact actually commits to, in a few sentences")
+    recommendation: str = Field(
+        default="revise", description="approve | approve_with_changes | revise"
+    )
+    rationale: str = Field(default="", description="Why that recommendation")
+    key_points: list[str] = Field(default_factory=list, description="What a reader must not miss")
+    concerns: list[str] = Field(default_factory=list, description="What would make this the wrong call")
+    contradicts_earlier_stage: list[str] = Field(
+        default_factory=list,
+        description="Anything here that conflicts with an earlier approved artifact",
+    )
+
+
 class TaskOutcome(BaseModel):
     """What a role reports after working a single task.
 
@@ -163,6 +183,7 @@ class ReleaseSummary(BaseModel):
 # Task name -> output model. The task name is what a planner asks a runtime for.
 SCHEMAS: dict[str, type[BaseModel]] = {
     "task_outcome": TaskOutcome,
+    "approval_briefing": ApprovalBriefing,
     "domain_context": DomainContext,
     "project_brief": ProjectBrief,
     "architecture_plan": ArchitecturePlan,
