@@ -70,9 +70,11 @@ class PlanningResult:
     runs: list[str] = field(default_factory=list)
     tasks_created: int = 0
     tasks_updated: int = 0
+    tasks_removed: int = 0
     questions_created: int = 0
     approvals_created: int = 0
     artifacts: list[str] = field(default_factory=list)
+    notes: list[str] = field(default_factory=list)
     error: str | None = None
 
     def as_dict(self) -> dict:
@@ -86,9 +88,11 @@ class PlanningResult:
             "runs": self.runs,
             "tasks_created": self.tasks_created,
             "tasks_updated": self.tasks_updated,
+            "tasks_removed": self.tasks_removed,
             "questions_created": self.questions_created,
             "approvals_created": self.approvals_created,
             "artifacts": self.artifacts,
+            "notes": self.notes,
             "error": self.error,
         }
 
@@ -501,5 +505,23 @@ async def _sync_tasks(session: AsyncSession, project: Project, breakdown: TaskBr
             task.acceptance_criteria = spec.acceptance_criteria
             task.metadata_json = {**(task.metadata_json or {}), "depends_on": spec.depends_on}
             result.tasks_updated += 1
+
+    # Tasks the new breakdown dropped. Re-planning replaced a drifted breakdown
+    # and left its seventeen tasks sitting beside the twenty that replaced them.
+    # Only untouched work is removed: anything a human has started stays, with
+    # the reason recorded, because a plan does not get to delete work in flight.
+    planned_titles = {spec.title for spec in breakdown.tasks}
+    for title, task in existing.items():
+        if title in planned_titles:
+            continue
+        if task.status in {"backlog", "ready"}:
+            await session.delete(task)
+            result.tasks_removed += 1
+        else:
+            task.metadata_json = {
+                **(task.metadata_json or {}),
+                "dropped_from_plan": "No longer in the task breakdown, kept because it had started",
+            }
+            result.notes.append(f"'{task.title}' is no longer in the plan but has started; left in place")
 
     await session.commit()

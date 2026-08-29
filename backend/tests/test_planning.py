@@ -538,3 +538,42 @@ async def test_a_resumed_stage_sees_the_stages_already_approved(session, planned
     assert "approved_project_brief" in breakdown_context
     assert "approved_architecture_plan" in breakdown_context
     assert "# Architecture plan" in breakdown_context["approved_architecture_plan"]
+
+
+async def test_replanning_removes_tasks_the_new_plan_dropped(session, planned):
+    """Re-planning replaced a drifted breakdown and left its seventeen tasks
+    sitting beside the twenty that replaced them."""
+    from sqlalchemy import select as sa_select
+
+    from app.db.models import Task
+
+    await plan_project(session, planned.id, use_gates=False)
+    stale = Task(project_id=planned.id, title="A task no plan asks for", status="backlog")
+    session.add(stale)
+    await session.commit()
+
+    result = await plan_project(session, planned.id, use_gates=False)
+
+    titles = {t.title for t in (await session.scalars(sa_select(Task))).all()}
+    assert "A task no plan asks for" not in titles
+    assert result.tasks_removed == 1
+
+
+async def test_replanning_keeps_work_that_has_already_started(session, planned):
+    """A plan does not get to delete work in flight."""
+    from sqlalchemy import select as sa_select
+
+    from app.db.models import Task
+
+    await plan_project(session, planned.id, use_gates=False)
+    started = Task(project_id=planned.id, title="Started but off-plan", status="in_progress")
+    session.add(started)
+    await session.commit()
+
+    result = await plan_project(session, planned.id, use_gates=False)
+
+    kept = (await session.scalars(sa_select(Task).where(Task.title == "Started but off-plan"))).one()
+    assert kept.status == "in_progress"
+    assert kept.metadata_json["dropped_from_plan"]
+    assert any("no longer in the plan but has started" in n for n in result.notes)
+    assert result.tasks_removed == 0
