@@ -110,3 +110,37 @@ async def test_questions_are_queued_once_and_answerable(session, project):
     answered = await answer_question(session, first.id, "14 days", decided_by="sam")
     assert answered.answer == "14 days"
     assert answered.decided_by == "sam"
+
+
+async def test_an_approved_gate_is_not_raised_again(session, project):
+    """A re-plan raised a fresh copy of every gate the human had just approved -
+    sixteen duplicates, which then blocked the run they had just unblocked."""
+    first, created = await request_approval(session, "deploy", "Deploy", project_id=project.id)
+    assert created is True
+    await respond_to_approval(session, first.id, "approved")
+
+    again, created_again = await request_approval(session, "deploy", "Deploy", project_id=project.id)
+
+    assert created_again is False
+    assert again.id == first.id
+    assert again.status == "approved"
+
+
+async def test_a_rejected_gate_is_raised_again(session, project):
+    """Rejecting is a decision to re-ask, not a standing answer."""
+    first, _ = await request_approval(session, "deploy", "Deploy", project_id=project.id)
+    await respond_to_approval(session, first.id, "rejected")
+
+    again, created = await request_approval(session, "deploy", "Deploy", project_id=project.id)
+
+    assert created is True
+    assert again.id != first.id
+    assert again.status == "pending"
+
+
+async def test_a_cancelled_gate_is_raised_again(session, project):
+    first, _ = await request_approval(session, "deploy", "Deploy", project_id=project.id)
+    await respond_to_approval(session, first.id, "cancelled")
+
+    _again, created = await request_approval(session, "deploy", "Deploy", project_id=project.id)
+    assert created is True

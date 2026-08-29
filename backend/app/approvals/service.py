@@ -49,18 +49,24 @@ async def request_approval(
     risk_level: str = "medium",
     requested_by_agent_id: uuid.UUID | None = None,
 ) -> tuple[ApprovalRequest, bool]:
-    """Create a pending request, or return the matching one already open.
+    """Create a pending request, or return the one already standing.
 
-    Returns (request, created). Re-planning must not pile up duplicate gates for
-    the same action.
+    Returns (request, created). A gate that is pending is already asked; a gate
+    that is approved is already answered and stays in force. Deduping only
+    against pending ones meant a re-plan raised a fresh copy of every gate the
+    human had just approved - sixteen duplicates, which then blocked the run
+    they had just unblocked. Rejected and cancelled gates do not count: those
+    are decisions to re-ask.
     """
     existing = (
         await session.scalars(
-            select(ApprovalRequest).where(
+            select(ApprovalRequest)
+            .where(
                 ApprovalRequest.project_id == project_id,
                 ApprovalRequest.action_type == action_type,
-                ApprovalRequest.status == "pending",
+                ApprovalRequest.status.in_(("pending", "approved")),
             )
+            .order_by(ApprovalRequest.created_at.desc())
         )
     ).first()
     if existing is not None:
