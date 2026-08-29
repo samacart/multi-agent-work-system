@@ -1,5 +1,14 @@
-import { useCallback, useEffect, useState } from 'react'
-import { api, type Approval, type Decision } from '../lib/api'
+import { Fragment, useCallback, useEffect, useState } from 'react'
+import {
+  api,
+  APPROVAL_ARTIFACT,
+  GATED_ROLES,
+  type Approval,
+  type Artifact,
+  type Decision,
+  type Task,
+} from '../lib/api'
+import Markdown from './Markdown'
 import ProjectPicker from './ProjectPicker'
 import { useProjects } from '../lib/useProjects'
 
@@ -7,15 +16,25 @@ export default function HumanQueue() {
   const { projects, selected, setSelected, error: listError } = useProjects()
   const [approvals, setApprovals] = useState<Approval[]>([])
   const [decisions, setDecisions] = useState<Decision[]>([])
+  const [artifacts, setArtifacts] = useState<Artifact[]>([])
+  const [tasks, setTasks] = useState<Task[]>([])
   const [answers, setAnswers] = useState<Record<string, string>>({})
+  const [openApproval, setOpenApproval] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
 
   const load = useCallback(async () => {
     if (!selected) return
     try {
-      const [a, d] = await Promise.all([api.approvals(selected), api.decisions(selected)])
+      const [a, d, art, t] = await Promise.all([
+        api.approvals(selected),
+        api.decisions(selected),
+        api.artifacts(selected).catch(() => []),
+        api.tasks(selected).catch(() => []),
+      ])
       setApprovals(a)
       setDecisions(d)
+      setArtifacts(art)
+      setTasks(t)
       setError(null)
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err))
@@ -49,6 +68,18 @@ export default function HumanQueue() {
     }
   }
 
+  /** The artifact this gate is actually asking about, if it is a stage gate. */
+  const artifactFor = (approval: Approval) => {
+    const type = APPROVAL_ARTIFACT[approval.action_type]
+    return type ? artifacts.find((a) => a.type === type) : undefined
+  }
+
+  /** What stays blocked while this gate is pending. */
+  const blockedBy = (approval: Approval) =>
+    APPROVAL_ARTIFACT[approval.action_type]
+      ? []
+      : tasks.filter((t) => t.agent_role && GATED_ROLES.includes(t.agent_role) && t.status !== 'done')
+
   const pending = approvals.filter((a) => a.status === 'pending')
   const resolved = approvals.filter((a) => a.status !== 'pending')
   const open = decisions.filter((d) => !d.answer)
@@ -77,27 +108,69 @@ export default function HumanQueue() {
                 </tr>
               </thead>
               <tbody>
-                {pending.map((approval) => (
-                  <tr key={approval.id}>
-                    <td>
-                      <code>{approval.action_type}</code>
-                    </td>
-                    <td>
-                      <span className={approval.risk_level === 'high' ? 'badge badge-bad' : 'badge'}>
-                        {approval.risk_level}
-                      </span>
-                    </td>
-                    <td>{approval.action_summary}</td>
-                    <td className="actions">
-                      <button className="link" onClick={() => void respond(approval, 'approved')}>
-                        approve
-                      </button>
-                      <button className="link link-bad" onClick={() => void respond(approval, 'rejected')}>
-                        reject
-                      </button>
-                    </td>
-                  </tr>
-                ))}
+                {pending.map((approval) => {
+                  const artifact = artifactFor(approval)
+                  const blocked = blockedBy(approval)
+                  const isOpen = openApproval === approval.id
+                  return (
+                    <Fragment key={approval.id}>
+                      <tr>
+                        <td>
+                          <code>{approval.action_type}</code>
+                        </td>
+                        <td>
+                          <span className={approval.risk_level === 'high' ? 'badge badge-bad' : 'badge'}>
+                            {approval.risk_level}
+                          </span>
+                        </td>
+                        <td>
+                          {approval.action_summary}
+                          {artifact ? (
+                            <div>
+                              <button
+                                className="link"
+                                onClick={() => setOpenApproval(isOpen ? null : approval.id)}
+                              >
+                                {isOpen ? 'hide' : 'read'} the {artifact.type.replace('_', ' ')} →
+                              </button>
+                            </div>
+                          ) : null}
+                          {!artifact && APPROVAL_ARTIFACT[approval.action_type] ? (
+                            <div className="muted">
+                              This gate refers to a {APPROVAL_ARTIFACT[approval.action_type].replace('_', ' ')},
+                              which has not been produced yet.
+                            </div>
+                          ) : null}
+                          {blocked.length ? (
+                            <div className="muted">
+                              Blocks {blocked.length} task{blocked.length === 1 ? '' : 's'} while pending:{' '}
+                              {blocked
+                                .slice(0, 3)
+                                .map((t) => t.title)
+                                .join('; ')}
+                              {blocked.length > 3 ? ` and ${blocked.length - 3} more` : ''}
+                            </div>
+                          ) : null}
+                        </td>
+                        <td className="actions">
+                          <button className="link" onClick={() => void respond(approval, 'approved')}>
+                            approve
+                          </button>
+                          <button className="link link-bad" onClick={() => void respond(approval, 'rejected')}>
+                            reject
+                          </button>
+                        </td>
+                      </tr>
+                      {isOpen && artifact ? (
+                        <tr>
+                          <td colSpan={4}>
+                            <Markdown>{artifact.content}</Markdown>
+                          </td>
+                        </tr>
+                      ) : null}
+                    </Fragment>
+                  )
+                })}
               </tbody>
             </table>
           )}

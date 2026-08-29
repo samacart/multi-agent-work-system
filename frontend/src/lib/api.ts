@@ -214,6 +214,19 @@ export type Approval = {
   updated_at: string
 }
 
+/**
+ * Stage gates ask you to approve one specific artifact. Being asked to approve
+ * something you cannot see is not a decision, it is a rubber stamp.
+ */
+export const APPROVAL_ARTIFACT: Record<string, string> = {
+  approve_project_brief: 'project_brief',
+  approve_architecture_plan: 'architecture_plan',
+  approve_task_breakdown: 'task_breakdown',
+}
+
+/** Roles the SDLC loop refuses to run while any approval is pending. */
+export const GATED_ROLES = ['developer', 'architect', 'release_manager']
+
 export type Decision = {
   id: string
   project_id: string
