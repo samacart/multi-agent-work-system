@@ -502,3 +502,39 @@ async def test_a_failed_briefing_does_not_block_the_gate(session, planned, monke
     assert result.status == "awaiting_approval"
     gate = (await session.scalars(sa_select(ApprovalRequest).where(ApprovalRequest.action_type == "approve_project_brief"))).one()
     assert "briefing_error" in gate.metadata_json
+
+
+async def test_a_resumed_stage_sees_the_stages_already_approved(session, planned):
+    """A task breakdown proposed backend work against an architecture plan that
+    said frontend-only, because skipping an approved stage dropped its artifact:
+    only the call that produced one ever put it in context."""
+    seen: dict[str, dict] = {}
+
+    from app.agents.runtime.base import AgentRuntime
+    from app.agents.runtime.mock import MockAgentRuntime
+
+    class Recording(AgentRuntime):
+        name = "recording"
+
+        async def run(self, agent_profile, input, context=None):  # noqa: ANN001
+            seen[str(input.get("task"))] = dict(context.extra) if context else {}
+            return await MockAgentRuntime().run(agent_profile, input, context)
+
+    import app.orchestration.runs as runs_module
+
+    original = runs_module.get_runtime
+    runs_module.get_runtime = lambda: Recording()
+    try:
+        await plan_project(session, planned.id)
+        await _approve(session, planned.id, "approve_project_brief")
+        await plan_project(session, planned.id)
+        await _approve(session, planned.id, "approve_architecture_plan")
+        seen.clear()
+        await plan_project(session, planned.id)
+    finally:
+        runs_module.get_runtime = original
+
+    breakdown_context = seen["task_breakdown"]
+    assert "approved_project_brief" in breakdown_context
+    assert "approved_architecture_plan" in breakdown_context
+    assert "# Architecture plan" in breakdown_context["approved_architecture_plan"]

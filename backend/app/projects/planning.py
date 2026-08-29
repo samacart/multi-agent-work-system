@@ -208,6 +208,20 @@ async def plan_project(
     for stage in STAGES:
         already_done = use_gates and await _stage_is_approved(session, project_id, stage)
         if already_done and await _artifact_exists(session, project_id, STAGE_ARTIFACTS[stage]):
+            # Carry the approved artifact forward. Skipping the stage without
+            # this is what let a task breakdown propose backend work against an
+            # architecture plan that said frontend-only: the later stage had
+            # never seen the earlier one, because only the call that produced an
+            # artifact put it in context.
+            approved = (
+                await session.scalars(
+                    select(Artifact).where(
+                        Artifact.project_id == project_id, Artifact.type == STAGE_ARTIFACTS[stage]
+                    )
+                )
+            ).first()
+            if approved is not None:
+                context.extra[f"approved_{STAGE_ARTIFACTS[stage]}"] = approved.content
             result.stages_completed.append(stage)
             continue
 
