@@ -71,6 +71,12 @@ class Settings(BaseSettings):
     # Ingestion is restricted to paths under these roots.
     allowed_source_roots: str = "/data/sources"
 
+    # Repositories a project may point its agents at. Deliberately separate from
+    # the ingestion roots: those are read-only corpora, these are working trees
+    # an agent executes in. Empty means no project may set a workspace, which
+    # fails closed - an unset root is a missing decision, not permission.
+    allowed_workspace_roots: str = ""
+
     # Embedding provider adapter:
     #   hash    deterministic, offline, lexical only, no dependencies
     #   ollama  real semantic embeddings from a local model, no credentials
@@ -113,6 +119,10 @@ class Settings(BaseSettings):
     def github_enabled(self) -> bool:
         """External integrations stay off unless explicitly configured."""
         return bool(self.github_token) or self.github_allow_unauthenticated
+
+    @property
+    def allowed_workspace_root_list(self) -> list[str]:
+        return [p.strip() for p in self.allowed_workspace_roots.split(",") if p.strip()]
 
     @property
     def ingest_extension_set(self) -> set[str]:

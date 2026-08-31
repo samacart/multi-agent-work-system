@@ -251,3 +251,8 @@ code { color: var(--accent); }
 .rec-changes { background: rgba(110,168,254,0.12); color: var(--accent); border: 1px solid var(--accent); }
 .rec-revise  { background: rgba(248,81,73,0.12); color: var(--bad); border: 1px solid var(--bad); }
 .rec-inline { color: var(--ok); font-size: 11px; }
+
+/* --- per-project workspace --- */
+.workspace { margin: 10px 0; }
+.workspace code { word-break: break-all; }
+.warn { color: var(--attention, #d9a441); }

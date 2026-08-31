@@ -338,3 +338,91 @@ async def test_an_unknown_role_is_rejected(client, seeded):
     response = await client.post(f"/projects/{project_id}/run?mode=sync&roles=qa,wizard")
     assert response.status_code == 422
     assert "wizard" in response.json()["detail"]
+
+
+# --- per-project workspaces ---
+
+
+@pytest.fixture
+def workspace_root(tmp_path, monkeypatch):
+    import subprocess
+
+    from app.config import get_settings
+
+    root = tmp_path / "workspaces"
+    root.mkdir()
+    repo = root / "repo"
+    repo.mkdir()
+    for args in (["init", "-q"], ["config", "user.email", "t@e.com"], ["config", "user.name", "t"]):
+        subprocess.run(["git", "-C", str(repo), *args], check=True, capture_output=True)
+    (repo / "f.py").write_text("x = 1\n")
+    subprocess.run(["git", "-C", str(repo), "add", "-A"], check=True, capture_output=True)
+    subprocess.run(["git", "-C", str(repo), "commit", "-q", "-m", "b"], check=True, capture_output=True)
+    monkeypatch.setattr(get_settings(), "allowed_workspace_roots", str(root))
+    return {"root": root, "repo": repo}
+
+
+async def test_a_project_can_be_created_with_a_workspace(client, workspace_root):
+    response = await client.post(
+        "/projects", json={"name": "with workspace", "workspace_path": str(workspace_root["repo"])}
+    )
+    assert response.status_code == 201
+    assert response.json()["workspace_path"] == str(workspace_root["repo"])
+
+
+async def test_a_workspace_outside_the_allowed_roots_is_refused(client, workspace_root, tmp_path):
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    response = await client.post(
+        "/projects", json={"name": "bad", "workspace_path": str(outside)}
+    )
+    assert response.status_code == 422
+    assert "outside the allowed workspace roots" in response.json()["detail"]["reason"]
+
+
+async def test_a_non_git_workspace_is_refused(client, workspace_root):
+    plain = workspace_root["root"] / "plain"
+    plain.mkdir()
+    response = await client.post("/projects", json={"name": "bad", "workspace_path": str(plain)})
+    assert response.status_code == 422
+    assert "Not a git repository" in response.json()["detail"]["reason"]
+
+
+async def test_a_workspace_can_be_set_and_cleared_afterwards(client, workspace_root):
+    project = (await client.post("/projects", json={"name": "later"})).json()
+
+    updated = await client.patch(
+        f"/projects/{project['id']}", json={"workspace_path": str(workspace_root["repo"])}
+    )
+    assert updated.status_code == 200
+    assert updated.json()["workspace_path"] == str(workspace_root["repo"])
+
+    cleared = await client.patch(f"/projects/{project['id']}", json={"workspace_path": ""})
+    assert cleared.json()["workspace_path"] is None
+
+
+async def test_the_workspace_endpoint_reports_state_and_fallback(client, workspace_root, monkeypatch):
+    from app.config import get_settings
+
+    monkeypatch.setattr(get_settings(), "claude_code_cwd", "")
+    project = (
+        await client.post(
+            "/projects", json={"name": "ws", "workspace_path": str(workspace_root["repo"])}
+        )
+    ).json()
+
+    body = (await client.get(f"/projects/{project['id']}/workspace")).json()
+    assert body["resolved_workspace"] == str(workspace_root["repo"])
+    assert body["using_global_fallback"] is False
+    assert body["validation"]["valid"] is True
+    assert body["validation"]["branch"]
+
+
+async def test_project_detail_reports_where_agents_will_run(client, workspace_root):
+    project = (
+        await client.post(
+            "/projects", json={"name": "ws", "workspace_path": str(workspace_root["repo"])}
+        )
+    ).json()
+    detail = (await client.get(f"/projects/{project['id']}")).json()
+    assert detail["resolved_workspace"] == str(workspace_root["repo"])

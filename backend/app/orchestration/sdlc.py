@@ -36,7 +36,7 @@ from app.ingestion.chunk import content_hash
 from app.memory.embeddings import get_embedding_provider
 from app.orchestration.runs import AgentRunFailed, execute_run
 from app.projects.planning import gather_context
-from app.orchestration.workspace import read_workspace_diff
+from app.orchestration.workspace import read_workspace_diff, validate_workspace, workspace_for
 from app.projects.tasks import check_transition, path_to
 
 log = logging.getLogger(__name__)
@@ -189,9 +189,29 @@ async def run_project(
     base_context, _memories = await gather_context(session, project)
 
     settings = get_settings()
-    workspace_diff = await read_workspace_diff(
-        settings.claude_code_cwd or None, max_chars=settings.review_diff_max_chars
-    )
+    workspace = workspace_for(project)
+
+    # Agents execute here with shell access. A workspace that is missing, not a
+    # repository, or outside the allowed roots should stop the run at the start
+    # rather than surface as a confusing failure several passes in.
+    if workspace:
+        # A path the project set came in through the API and is held to the
+        # allowed roots; the global fallback is the operator's own setting.
+        validation = await validate_workspace(
+            workspace, enforce_roots=project.workspace_path is not None
+        )
+        if not validation.valid:
+            project.status = "blocked"
+            result.status = "blocked"
+            result.error = f"Workspace unusable: {validation.reason}"
+            result.notes.append(result.error)
+            await session.commit()
+            log.warning("sdlc run for %s refused: %s", project.name, validation.reason)
+            return result
+        for warning in validation.warnings:
+            result.notes.append(f"Workspace: {warning}")
+
+    workspace_diff = await read_workspace_diff(workspace, max_chars=settings.review_diff_max_chars)
     if workspace_diff.available and not workspace_diff.is_empty:
         result.notes.append(
             f"Review passes read the workspace diff: {len(workspace_diff.changed_files)} modified, "
@@ -263,6 +283,7 @@ async def run_project(
                     all_criteria=all_criteria,
                     completed_titles=done_titles,
                     workspace_diff=workspace_diff,
+                    workspace=workspace,
                 )
                 for task in runnable
             )
@@ -369,6 +390,7 @@ async def _run_task_isolated(
     all_criteria: list[str],
     completed_titles: list[str],
     workspace_diff=None,  # noqa: ANN001 - WorkspaceDiff
+    workspace: str | None = None,
 ) -> _TaskOutcome:
     """Run one task pass in its own session, so a wave can run concurrently."""
     async with semaphore, maker() as session:

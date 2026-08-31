@@ -19,6 +19,7 @@ from app.api.schemas import (
     ProjectCreate,
     ProjectDetailOut,
     ProjectOut,
+    ProjectUpdate,
     TaskCreate,
     TaskOut,
     TaskUpdate,
@@ -38,6 +39,7 @@ from app.db.models import (
 from app.db.session import get_session
 from app.orchestration.queue import enqueue
 from app.orchestration.sdlc import SdlcError, run_project
+from app.orchestration.workspace import validate_workspace, workspace_for
 from app.projects.planning import PlanningError, plan_project
 from app.projects.tasks import InvalidTransition, check_transition
 
@@ -56,12 +58,67 @@ async def create_project(payload: ProjectCreate, session: AsyncSession = Depends
     if payload.topic_id is not None and await session.get(Topic, payload.topic_id) is None:
         raise HTTPException(status_code=404, detail="Topic not found")
 
+    if payload.workspace_path:
+        await _validated_workspace_or_422(payload.workspace_path)
+
     project = Project(
-        topic_id=payload.topic_id, name=payload.name.strip(), goal=payload.goal, status="draft"
+        topic_id=payload.topic_id,
+        name=payload.name.strip(),
+        goal=payload.goal,
+        workspace_path=payload.workspace_path or None,
+        status="draft",
     )
     session.add(project)
     await session.commit()
     return project
+
+
+async def _validated_workspace_or_422(path: str):  # noqa: ANN202
+    """A workspace becomes an agent's working directory with shell access, so it
+    is checked before it is stored, not when a run finally fails."""
+    validation = await validate_workspace(path)
+    if not validation.valid:
+        raise HTTPException(status_code=422, detail=validation.as_dict())
+    return validation
+
+
+@router.patch("/projects/{project_id}", response_model=ProjectOut)
+async def update_project(
+    project_id: uuid.UUID, payload: ProjectUpdate, session: AsyncSession = Depends(get_session)
+) -> Project:
+    project = await _get_project_or_404(session, project_id)
+
+    if payload.workspace_path is not None:
+        # An explicit empty string clears it back to the global fallback.
+        if payload.workspace_path.strip():
+            await _validated_workspace_or_422(payload.workspace_path)
+            project.workspace_path = payload.workspace_path.strip()
+        else:
+            project.workspace_path = None
+
+    for field in ("name", "goal"):
+        value = getattr(payload, field)
+        if value is not None:
+            setattr(project, field, value)
+
+    await session.commit()
+    return project
+
+
+@router.get("/projects/{project_id}/workspace")
+async def project_workspace(
+    project_id: uuid.UUID, session: AsyncSession = Depends(get_session)
+) -> dict:
+    """Where this project's agents will run, and whether they can."""
+    project = await _get_project_or_404(session, project_id)
+    resolved = workspace_for(project)
+    validation = await validate_workspace(resolved)
+    return {
+        "project_workspace": project.workspace_path,
+        "resolved_workspace": resolved,
+        "using_global_fallback": project.workspace_path is None and resolved is not None,
+        "validation": validation.as_dict(),
+    }
 
 
 @router.get("/projects", response_model=list[ProjectOut])
@@ -92,6 +149,8 @@ async def get_project(project_id: uuid.UUID, session: AsyncSession = Depends(get
         brief=project.brief,
         created_at=project.created_at,
         updated_at=project.updated_at,
+        workspace_path=project.workspace_path,
+        resolved_workspace=workspace_for(project),
         topic_name=topic.name if topic else None,
         task_counts={row[0]: int(row[1]) for row in status_rows},
         run_count=await count(AgentRun, AgentRun.project_id == project_id),

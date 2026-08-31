@@ -100,6 +100,17 @@ class ProjectCreate(BaseModel):
     name: str = Field(min_length=1, max_length=255)
     goal: str | None = None
     topic_id: uuid.UUID | None = None
+    workspace_path: str | None = Field(
+        default=None,
+        description="Repository this project's agents work in. Must resolve inside "
+        "ALLOWED_WORKSPACE_ROOTS. Unset falls back to the global CLAUDE_CODE_CWD.",
+    )
+
+
+class ProjectUpdate(BaseModel):
+    name: str | None = None
+    goal: str | None = None
+    workspace_path: str | None = None
 
 
 class ProjectOut(BaseModel):
@@ -111,6 +122,7 @@ class ProjectOut(BaseModel):
     goal: str | None
     status: str
     brief: str | None
+    workspace_path: str | None
     created_at: datetime
     updated_at: datetime
 
@@ -122,6 +134,8 @@ class ProjectDetailOut(ProjectOut):
     artifact_count: int = 0
     open_questions: int = 0
     pending_approvals: int = 0
+    # Where agents will actually run, after the global fallback is applied.
+    resolved_workspace: str | None = None
 
 
 class TaskCreate(BaseModel):

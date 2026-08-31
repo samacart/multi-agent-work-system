@@ -701,3 +701,21 @@ async def test_including_the_release_role_runs_the_release_pass(session, project
     await _clear_approvals(session, project)
     result = await run_project(session, project.id, roles={"code_reviewer", "release_manager"})
     assert "release_notes" in result.artifacts
+
+
+async def test_a_run_refuses_an_unusable_workspace(session, project, monkeypatch, tmp_path):
+    """Agents execute there with shell access; a missing or non-git workspace
+    should stop the run at the start, not surface several passes in."""
+    from app.config import get_settings
+
+    monkeypatch.setattr(get_settings(), "allowed_workspace_roots", str(tmp_path))
+    monkeypatch.setattr(get_settings(), "claude_code_cwd", str(tmp_path / "not-a-repo"))
+    await _clear_approvals(session, project)
+
+    result = await run_project(session, project.id)
+
+    assert result.status == "blocked"
+    assert "Workspace unusable" in result.error
+    assert result.tasks_run == 0
+    await session.refresh(project)
+    assert project.status == "blocked"

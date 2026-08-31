@@ -136,11 +136,31 @@ export type Project = {
   goal: string | null
   status: ProjectStatus
   brief: string | null
+  workspace_path: string | null
   created_at: string
   updated_at: string
 }
 
+export type WorkspaceValidation = {
+  path: string
+  valid: boolean
+  reason: string | null
+  resolved_path: string | null
+  branch: string | null
+  dirty_files: number
+  is_agent_branch: boolean
+  warnings: string[]
+}
+
+export type WorkspaceStatus = {
+  project_workspace: string | null
+  resolved_workspace: string | null
+  using_global_fallback: boolean
+  validation: WorkspaceValidation
+}
+
 export type ProjectDetail = Project & {
+  resolved_workspace: string | null
   topic_name: string | null
   task_counts: Record<string, number>
   run_count: number
@@ -357,11 +377,22 @@ export const api = {
 
   projects: () => request<Project[]>('/projects'),
   project: (id: string) => request<ProjectDetail>(`/projects/${id}`),
-  createProject: (name: string, goal?: string, topicId?: string) =>
+  createProject: (name: string, goal?: string, topicId?: string, workspacePath?: string) =>
     request<Project>('/projects', {
       method: 'POST',
-      body: { name, goal: goal || null, topic_id: topicId || null },
+      body: {
+        name,
+        goal: goal || null,
+        topic_id: topicId || null,
+        workspace_path: workspacePath || null,
+      },
     }),
+  setWorkspace: (projectId: string, workspacePath: string) =>
+    request<Project>(`/projects/${projectId}`, {
+      method: 'PATCH',
+      body: { workspace_path: workspacePath },
+    }),
+  workspace: (projectId: string) => request<WorkspaceStatus>(`/projects/${projectId}/workspace`),
   planProject: (id: string) =>
     request<PlanningResult>(`/projects/${id}/plan`, { method: 'POST', okStatuses: [422] }),
   runProject: (id: string) => request<SdlcResult>(`/projects/${id}/run`, { method: 'POST' }),

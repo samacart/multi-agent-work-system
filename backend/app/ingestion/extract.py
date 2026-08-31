@@ -12,6 +12,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from app.config import get_settings
+from app.paths import PathNotAllowed, resolve_within
 
 
 class SourceAccessError(Exception):
@@ -30,28 +31,12 @@ class ExtractedDocument:
 
 
 def resolve_within_roots(raw_path: str, roots: list[str] | None = None) -> Path:
-    """Resolve `raw_path` and prove it sits inside an allowed root."""
+    """Resolve `raw_path` and prove it sits inside an allowed source root."""
     allowed = roots if roots is not None else get_settings().allowed_source_root_list
-    if not allowed:
-        raise SourceAccessError("No allowed source roots are configured")
-
-    candidate = Path(raw_path).expanduser()
     try:
-        # strict=False so a clear "does not exist" beats an OSError.
-        resolved = candidate.resolve(strict=False)
-    except OSError as exc:
-        raise SourceAccessError(f"Cannot resolve path: {exc}") from exc
-
-    for root in allowed:
-        root_resolved = Path(root).expanduser().resolve(strict=False)
-        if resolved == root_resolved or root_resolved in resolved.parents:
-            if not resolved.exists():
-                raise SourceAccessError(f"Path does not exist: {raw_path}")
-            return resolved
-
-    raise SourceAccessError(
-        f"Path is outside the allowed source roots ({', '.join(allowed)}): {raw_path}"
-    )
+        return resolve_within(raw_path, allowed, what="source")
+    except PathNotAllowed as exc:
+        raise SourceAccessError(str(exc)) from exc
 
 
 def _read_text_file(path: Path, max_bytes: int) -> str:

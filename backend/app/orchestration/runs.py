@@ -53,6 +53,7 @@ async def execute_run(
     context: AgentContext,
     project_id: uuid.UUID | None = None,
     task_id: uuid.UUID | None = None,
+    workspace: str | None = None,
 ) -> RunOutcome:
     """Invoke `role` for the named structured `task` and record an AgentRun.
 
@@ -69,6 +70,9 @@ async def execute_run(
         "system_prompt": profile.system_prompt,
         # Passes for the same project can share a warm session pool.
         "session_pool": str(project_id) if project_id else "",
+        # The repository this pass runs in. A runtime that executes anywhere
+        # must run where the diff was read, or the two describe different repos.
+        "workspace": workspace or "",
     }
     run = AgentRun(
         project_id=project_id,

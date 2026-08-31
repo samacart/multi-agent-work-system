@@ -142,8 +142,11 @@ class ClaudeCodeRuntime(AgentRuntime):
         if flags is None:
             flags = tool_flags_for(getattr(agent_profile, "allowed_tools_json", None))
 
+        # The caller's workspace wins; the configured one is the fallback.
+        cwd = str(input.get("workspace") or "") or self.cwd
+
         try:
-            stdout = await self._invoke(prompt, resume_id, flags)
+            stdout = await self._invoke(prompt, resume_id, flags, cwd)
         except (ClaudeCodeUnavailable, asyncio.TimeoutError) as exc:
             return AgentRunResult(status="failed", error=str(exc) or "Claude Code timed out")
 
@@ -187,7 +190,11 @@ class ClaudeCodeRuntime(AgentRuntime):
         )
 
     async def _invoke(
-        self, prompt: str, resume_id: str | None = None, tool_flags: list[str] | None = None
+        self,
+        prompt: str,
+        resume_id: str | None = None,
+        tool_flags: list[str] | None = None,
+        cwd: str | None = None,
     ) -> str:
         if self._runner is not None:
             return await self._runner(prompt)
@@ -201,7 +208,7 @@ class ClaudeCodeRuntime(AgentRuntime):
             "json",
             *resume_flags,
             *(tool_flags or []),
-            cwd=self.cwd,
+            cwd=cwd or self.cwd,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
         )

@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react'
 import { api, type Artifact, type PlanningResult, type ProjectDetail, type SdlcResult, type Topic } from '../lib/api'
 import Markdown from './Markdown'
 import ProjectPicker from './ProjectPicker'
+import Workspace from './Workspace'
 import { useProjects } from '../lib/useProjects'
 
 export default function Projects() {
@@ -10,6 +11,7 @@ export default function Projects() {
   const [name, setName] = useState('')
   const [goal, setGoal] = useState('')
   const [topicId, setTopicId] = useState('')
+  const [workspacePath, setWorkspacePath] = useState('')
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
 
@@ -25,9 +27,15 @@ export default function Projects() {
     if (!name.trim()) return
     setBusy(true)
     try {
-      const project = await api.createProject(name.trim(), goal.trim() || undefined, topicId || undefined)
+      const project = await api.createProject(
+        name.trim(),
+        goal.trim() || undefined,
+        topicId || undefined,
+        workspacePath.trim() || undefined,
+      )
       setName('')
       setGoal('')
+      setWorkspacePath('')
       setError(null)
       await reload()
       setSelected(project.id)
@@ -56,6 +64,12 @@ export default function Projects() {
           onChange={(e) => setGoal(e.target.value)}
           placeholder="goal — what does done look like?"
           aria-label="project goal"
+        />
+        <input
+          value={workspacePath}
+          onChange={(e) => setWorkspacePath(e.target.value)}
+          placeholder="workspace repo (optional)"
+          aria-label="workspace path"
         />
         <select value={topicId} onChange={(e) => setTopicId(e.target.value)} aria-label="topic">
           <option value="">no topic</option>
@@ -226,6 +240,8 @@ function ProjectDetailView({ projectId, onChanged }: { projectId: string; onChan
           </ul>
         </div>
       ) : null}
+
+      <Workspace projectId={projectId} />
 
       {branch ? (
         <p className="muted">
