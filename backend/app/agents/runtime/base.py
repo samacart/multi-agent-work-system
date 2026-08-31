@@ -35,6 +35,10 @@ class AgentProfileLike(Protocol):
     name: str
     role: str
     system_prompt: str
+    # What this role is permitted to do. A runtime that can constrain itself is
+    # expected to derive its permissions from this rather than from global
+    # configuration - see app/agents/permissions.py.
+    allowed_tools_json: list
 
 
 class AgentRuntime(ABC):

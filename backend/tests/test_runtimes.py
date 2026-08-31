@@ -415,39 +415,47 @@ async def test_planning_runs_end_to_end_on_a_non_mock_runtime(session):
 # --- claude code is destructive by default and must be constrained ---
 
 
-def test_claude_code_is_read_only_by_default():
-    """Headless `claude -p` edits files with no permission prompt - verified
-    against the real CLI. There is no interactive gate to fall back on, so the
-    constraint has to be passed explicitly on every invocation."""
-    from app.config import get_settings
+def test_a_role_gets_only_what_its_profile_grants():
+    """Permissions were stored and never enforced: every role ran under one
+    global tool policy, so a reviewer could edit the repository as freely as a
+    developer."""
+    from app.agents.permissions import tool_flags_for
 
-    settings = get_settings()
-    flags = settings.claude_code_tool_flags
+    reviewer = tool_flags_for(["memory.search", "source.read", "artifact.write"])
+    developer = tool_flags_for(["source.read", "repo.edit", "tests.run", "vcs.commit"])
 
-    assert "--disallowedTools" in flags
-    blocked = flags[flags.index("--disallowedTools") + 1]
+    reviewer_tools = reviewer[reviewer.index("--allowedTools") + 1]
+    developer_tools = developer[developer.index("--allowedTools") + 1]
+
     for tool in ("Edit", "Write", "Bash"):
-        assert tool in blocked
-    assert settings.claude_code_can_write is False
+        assert tool not in reviewer_tools
+    assert "Edit" in developer_tools and "Bash(pytest:*)" in developer_tools
+    assert "Read" in reviewer_tools, "every role must be able to read"
 
 
-def test_the_runtime_passes_its_tool_flags_to_the_cli():
-    from app.agents.runtime.claude_code import ClaudeCodeRuntime
+def test_the_runtime_derives_its_flags_from_the_profile():
+    from app.agents.permissions import tool_flags_for
 
     runtime = _claude_code(lambda prompt: _echo(json.dumps(BRIEF)))
-    assert "--disallowedTools" in runtime.tool_flags
+    # No override: flags come from whichever profile is being run.
+    assert runtime.tool_flags is None
+
+    class Reviewer:
+        name, role, system_prompt = "Code Reviewer", "code_reviewer", "..."
+        allowed_tools_json = ["source.read"]
+
+    class Developer:
+        name, role, system_prompt = "Software Developer", "developer", "..."
+        allowed_tools_json = ["source.read", "repo.edit"]
+
+    assert tool_flags_for(Reviewer.allowed_tools_json) != tool_flags_for(Developer.allowed_tools_json)
+
+
+def test_an_explicit_override_still_wins():
+    from app.agents.runtime.claude_code import ClaudeCodeRuntime
 
     explicit = ClaudeCodeRuntime(runner=lambda p: _echo("{}"), tool_flags=["--allowedTools", "Read"])
     assert explicit.tool_flags == ["--allowedTools", "Read"]
-
-
-def test_enabling_writes_is_visible_in_config(monkeypatch):
-    """Turning writes on should be legible, not buried in a tool string."""
-    from app.config import get_settings
-
-    settings = get_settings()
-    monkeypatch.setattr(settings, "claude_code_disallowed_tools", "NotebookEdit")
-    assert settings.claude_code_can_write is True
 
 
 # --- session pooling ---
@@ -516,4 +524,4 @@ def test_resume_and_tool_flags_are_both_passed():
 
     source = inspect.getsource(module.ClaudeCodeRuntime._invoke)
     assert "*resume_flags" in source
-    assert "*self.tool_flags" in source
+    assert "*(tool_flags or [])" in source

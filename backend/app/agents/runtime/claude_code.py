@@ -21,6 +21,7 @@ from typing import Any
 from pydantic import ValidationError
 
 from app.agents.contracts import schema_for
+from app.agents.permissions import tool_flags_for
 from app.agents.runtime.base import AgentContext, AgentProfileLike, AgentRunResult, AgentRuntime
 from app.agents.runtime.llm import render_context
 from app.config import get_settings
@@ -99,7 +100,9 @@ class ClaudeCodeRuntime(AgentRuntime):
         # Headless `claude -p` edits files without prompting, so the constraint
         # has to be passed explicitly - there is no interactive gate to fall
         # back on.
-        self.tool_flags = settings.claude_code_tool_flags if tool_flags is None else tool_flags
+        # An explicit override wins; otherwise flags are derived per call from
+        # the profile being run, so each role gets only what its profile grants.
+        self.tool_flags = tool_flags
         self.reuse_sessions = (
             settings.claude_code_reuse_sessions if reuse_sessions is None else reuse_sessions
         )
@@ -135,8 +138,12 @@ class ClaudeCodeRuntime(AgentRuntime):
         pool_key = str(input.get("session_pool") or "") if self.reuse_sessions else ""
         resume_id = await _borrow_session(pool_key) if pool_key else None
 
+        flags = self.tool_flags
+        if flags is None:
+            flags = tool_flags_for(getattr(agent_profile, "allowed_tools_json", None))
+
         try:
-            stdout = await self._invoke(prompt, resume_id)
+            stdout = await self._invoke(prompt, resume_id, flags)
         except (ClaudeCodeUnavailable, asyncio.TimeoutError) as exc:
             return AgentRunResult(status="failed", error=str(exc) or "Claude Code timed out")
 
@@ -179,7 +186,9 @@ class ClaudeCodeRuntime(AgentRuntime):
             f"```json\n{json.dumps(schema, indent=2)}\n```"
         )
 
-    async def _invoke(self, prompt: str, resume_id: str | None = None) -> str:
+    async def _invoke(
+        self, prompt: str, resume_id: str | None = None, tool_flags: list[str] | None = None
+    ) -> str:
         if self._runner is not None:
             return await self._runner(prompt)
 
@@ -191,7 +200,7 @@ class ClaudeCodeRuntime(AgentRuntime):
             "--output-format",
             "json",
             *resume_flags,
-            *self.tool_flags,
+            *(tool_flags or []),
             cwd=self.cwd,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,

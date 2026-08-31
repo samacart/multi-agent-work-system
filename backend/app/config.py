@@ -44,11 +44,14 @@ class Settings(BaseSettings):
     # mid-run on a real project and cascaded to six skipped dependents.
     claude_code_timeout_seconds: int = 1800
     # Claude Code has real filesystem and shell access, and in headless `-p`
-    # mode it edits without prompting. Read-only by default: an agent asked to
-    # produce a plan or a review has no business changing the repository it is
-    # reading. Enabling writes should be a deliberate act, ideally against a
-    # throwaway git worktree rather than a working tree.
-    claude_code_disallowed_tools: str = "Edit,Write,MultiEdit,NotebookEdit,Bash"
+    # mode it edits without prompting. What each role may reach for comes from
+    # its own profile now (app/agents/permissions.py); this list is applied on
+    # top of every profile and is for what no role may ever do. It must not name
+    # Edit, Write or bare Bash, or it would silently override the grants that
+    # let the developer and QA roles work at all.
+    claude_code_disallowed_tools: str = (
+        "Bash(rm:*),Bash(sudo:*),Bash(curl:*),Bash(wget:*),Bash(ssh:*),Bash(git push:*)"
+    )
     # Independent tasks in the same dependency wave run concurrently. Each pass
     # is a whole agent invocation, so this is the difference between a run
     # taking ten minutes and taking fifty.
@@ -105,20 +108,6 @@ class Settings(BaseSettings):
     @property
     def allowed_source_root_list(self) -> list[str]:
         return [p.strip() for p in self.allowed_source_roots.split(",") if p.strip()]
-
-    @property
-    def claude_code_tool_flags(self) -> list[str]:
-        flags: list[str] = []
-        if self.claude_code_allowed_tools.strip():
-            flags += ["--allowedTools", self.claude_code_allowed_tools.strip()]
-        if self.claude_code_disallowed_tools.strip():
-            flags += ["--disallowedTools", self.claude_code_disallowed_tools.strip()]
-        return flags
-
-    @property
-    def claude_code_can_write(self) -> bool:
-        blocked = {t.strip().lower() for t in self.claude_code_disallowed_tools.split(",")}
-        return not {"edit", "write"} & blocked
 
     @property
     def github_enabled(self) -> bool:

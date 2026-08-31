@@ -9,8 +9,9 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-# Tool names are advisory in Phase 1 (no runtime consumes them yet) but they
-# document the intended blast radius of each role.
+# What a role may do. These are enforced, not documentation: see
+# app/agents/permissions.py, which turns them into the tool flags each agent's
+# runtime is invoked with.
 READ_ONLY_TOOLS = ["memory.search", "source.read", "artifact.write"]
 
 
@@ -88,7 +89,7 @@ DEFAULT_AGENT_PROFILES: list[DefaultAgentProfile] = [
             "the plan and project conventions. Keep changes focused. Prefer existing patterns. Add or "
             "update tests when behavior changes. Record what changed and any follow-up risks."
         ),
-        allowed_tools=[*READ_ONLY_TOOLS, "repo.edit", "tests.run", "approval.request"],
+        allowed_tools=[*READ_ONLY_TOOLS, "repo.edit", "tests.run", "vcs.commit", "approval.request"],
         approval_rules=BASE_APPROVAL_RULES,
     ),
     DefaultAgentProfile(
@@ -99,7 +100,9 @@ DEFAULT_AGENT_PROFILES: list[DefaultAgentProfile] = [
             "criteria. Identify relevant tests, missing coverage, edge cases, and manual verification "
             "steps. Produce evidence for each acceptance criterion."
         ),
-        allowed_tools=[*READ_ONLY_TOOLS, "tests.run"],
+        # QA writes tests as well as running them: a verifier that can only read
+        # cannot close a coverage gap it finds.
+        allowed_tools=[*READ_ONLY_TOOLS, "repo.edit", "tests.run"],
         approval_rules=BASE_APPROVAL_RULES,
     ),
     DefaultAgentProfile(
@@ -140,6 +143,8 @@ DEFAULT_AGENT_PROFILES: list[DefaultAgentProfile] = [
             "notes, rollout checklist, migration notes, operational risks, monitoring suggestions, and "
             "final project summary."
         ),
+        # Commits the delivery, does not author it.
+        allowed_tools=[*READ_ONLY_TOOLS, "vcs.commit"],
         approval_rules=BASE_APPROVAL_RULES,
     ),
 ]
