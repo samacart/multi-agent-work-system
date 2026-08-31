@@ -187,17 +187,17 @@ configuring.
 Near-term order, biased toward operator trust, observability, safety and
 recovery, and toward thin vertical slices.
 
-| # | Slice | Epic | Why here |
-|---|---|---|---|
-| 1 | Per-project workspace, validated | E1 | Unblocks multi-project use; every later slice is more valuable with it |
-| 2 | Attention model on the overview | E2 | The product's premise, currently unmet |
-| 3 | Evidence-first task board | E4 | Makes the system's best behaviour visible |
-| 4 | Run pipeline and live progress | E5 | Long runs are the main failure surface |
-| 5 | Single-pass rerun and retry history | E5 | Recovery without re-running everything |
+| # | Slice | Epic | Why here | Status |
+|---|---|---|---|---|
+| 1 | Per-project workspace, validated | E1 | Unblocks multi-project use; every later slice is more valuable with it | **shipped** `76c48f9` |
+| 2 | Attention model on the overview | E2 | The product's premise, currently unmet | **shipped** `a1133a0` |
+| 3 | Evidence-first task board | E4 | Makes the system's best behaviour visible | **shipped** `b190768` |
+| 4 | Run pipeline and live progress | E5 | Long runs are the main failure surface | next |
+| 5 | Single-pass rerun and retry history | E5 | Recovery without re-running everything | |
 | 6 | Approve-with-conditions and send-back | E3 | Richer judgement than yes/no |
 | 7 | Memory provenance and curation states | E6 | Retrieval quality caps planning quality |
 | 8 | Artifact lineage and versions | E8 | Enables replan diffing |
-| 9 | Worker and job observability | E2 | Async mode is currently unobservable |
+| 9 | Job records persisted beyond Redis | E2 | Worker liveness shipped in slice 2; job history has not |
 | 10 | Preflight risk scan before writes | E1 | Needed before autonomy widens |
 
 ### Strategic bets worth pulling forward
@@ -447,23 +447,37 @@ Applied to [user-stories.md](user-stories.md). The inventory was surveyed on
 No story was removed, and none of the strategic bets were downgraded to make the
 near-term list look tidier.
 
+## Decisions taken
+
+Answered by the product owner on 2026-09-01 and now implemented or scheduled.
+
+1. **Workspace trust boundary** — constrained. A path supplied through the API
+   must resolve inside `ALLOWED_WORKSPACE_ROOTS`, a new setting separate from
+   the ingestion roots. The global `CLAUDE_CODE_CWD` fallback is deliberately
+   exempt: it is set by whoever runs the server, and holding it to a list it
+   predates would break every existing deployment. Shipped in slice 1.
+2. **Manual evidence** — allowed, attributed, auditable. Human evidence goes
+   through the same merge and promotion rule as agent evidence, carries
+   `attributed_to`, renders differently, and `met` without evidence is refused.
+   Shipped in slice 3.
+3. **Checkpoint granularity** — per mutating pass. Scheduled after slice 5.
+4. **Attention ranking** — approvals outrank individual blocked tasks; blast
+   radius dominates within a kind. Shipped in slice 2.
+5. **Multi-project concurrency** — not yet. Persisted job records and project
+   locks come first; that is now slice 9.
+
 ## Open questions for the product owner
 
-1. **Workspace trust boundary.** Should `Project.workspace_path` be constrained
-   to configured roots, or treated as trusted local operator input? It becomes a
-   process `cwd` for an agent with shell access. Constraining is safer;
-   worktrees living outside the ingestion roots makes it awkward. This blocks
-   slice 1's final shape.
-2. **Manual evidence.** Should a human marking a criterion `met` promote a task
-   the same way agent evidence does, or should human-verified completion be a
-   visibly distinct state? Evidence-based promotion is the system's most
-   trust-building property and this is the obvious way to erode it.
-3. **Checkpoint granularity.** Commit per mutating pass gives clean revert points
-   but a noisy history; commit per task is tidier but coarser to revert. The last
-   run produced six commits an operator called good, which argues for per-pass.
-4. **Attention ranking.** Is "blocked task with a resolvable cause" genuinely
-   more urgent than "pending approval blocking five tasks"? The ordering is a
-   product judgement and should be yours before it is encoded.
-5. **Multi-project concurrency.** Once workspaces are per-project, should the
-   worker run passes for several projects at once? `sdlc_max_parallel_tasks` is
-   currently global and the semaphore is per-run.
+1. **Stale-run recovery.** Slice 2 surfaces a run stuck in `running` after a
+   worker died, but nothing resolves it — the row stays `running` forever and
+   its task stays `in_progress`. Should the worker mark its in-flight runs
+   interrupted on startup, or should the operator dismiss them? This is the
+   remaining half of the failure that looked like progress for an hour.
+2. **Verification batching.** `GET /projects/{id}/criteria` exists and nothing
+   consumes it yet — the project-wide "needs verification" view (story 35) was
+   left out to keep slice 3 thin. Worth a screen of its own, or a filter on the
+   board?
+3. **Blast radius precision.** An approval's blast radius currently counts every
+   unfinished task owned by a gated role, because gates block roles rather than
+   tasks. That is accurate to the mechanism but coarse. Worth making gates
+   task-specific, or is role granularity the right model?
