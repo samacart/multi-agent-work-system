@@ -55,3 +55,26 @@ async def test_default_profiles_carry_approval_rules(session):
     assert "merge_pr" in rules["requires_approval"]
     assert "change_database_schema" in rules["requires_approval"]
     assert "semantic_search" in rules["auto_approved"]
+
+
+def test_every_persona_says_more_than_its_job_title():
+    """The originals were ~40 words of role statement, so what actually
+    differentiated the roles was the output contract rather than the prompt."""
+    from app.agents.profiles import DEFAULT_AGENT_PROFILES
+
+    for profile in DEFAULT_AGENT_PROFILES:
+        prompt = profile.system_prompt
+        assert prompt.startswith(f"You are the {profile.name} agent."), profile.role
+        assert len(prompt) > 800, f"{profile.role} persona is thin again ({len(prompt)} chars)"
+        lowered = prompt.lower()
+        # The properties that make a role behave rather than merely produce.
+        assert "refuse" in lowered or "do not" in lowered, f"{profile.role} states no refusals"
+        assert "disagree" in lowered, f"{profile.role} says nothing about disagreeing"
+        assert "done means" in lowered, f"{profile.role} does not define done"
+
+
+def test_personas_are_distinct():
+    from app.agents.profiles import DEFAULT_AGENT_PROFILES
+
+    prompts = [p.system_prompt for p in DEFAULT_AGENT_PROFILES]
+    assert len(set(prompts)) == len(prompts)
