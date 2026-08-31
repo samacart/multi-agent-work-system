@@ -7,7 +7,7 @@ from sqlalchemy import text
 
 from app.config import get_settings
 from app.db.session import get_sessionmaker
-from app.orchestration.queue import get_redis, queue_depth
+from app.orchestration.queue import get_redis, queue_depth, worker_alive
 
 router = APIRouter(tags=["health"])
 
@@ -33,9 +33,19 @@ async def readiness(response: Response) -> dict[str, object]:
 
     try:
         await get_redis().ping()
-        checks["redis"] = {"status": "ok", "queue_depth": await queue_depth()}
+        depth = await queue_depth()
+        checks["redis"] = {"status": "ok", "queue_depth": depth}
+        # A queued job with no worker to consume it is invisible otherwise:
+        # the request succeeds, the job never runs, and it reads as progress.
+        alive = await worker_alive()
+        checks["worker"] = {
+            "status": "ok" if alive else "error",
+            "detail": None if alive else "no heartbeat; queued jobs will not run",
+            "queue_depth": depth,
+        }
     except Exception as exc:  # noqa: BLE001
         checks["redis"] = {"status": "error", "detail": type(exc).__name__}
+        checks["worker"] = {"status": "error", "detail": "redis unavailable"}
 
     ready = all(c.get("status") == "ok" for c in checks.values())  # type: ignore[union-attr]
     if not ready:

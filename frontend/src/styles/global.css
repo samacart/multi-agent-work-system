@@ -256,3 +256,8 @@ code { color: var(--accent); }
 .workspace { margin: 10px 0; }
 .workspace code { word-break: break-all; }
 .warn { color: var(--attention, #d9a441); }
+
+/* --- attention --- */
+.quiet { border: 1px solid var(--border); border-left: 2px solid var(--ok); border-radius: 3px; padding: 12px 14px; background: var(--panel); }
+.quiet p { margin: 4px 0 0; }
+.consequence { color: var(--bad); font-size: 11px; margin-top: 2px; }

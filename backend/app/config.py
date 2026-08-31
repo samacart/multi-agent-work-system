@@ -62,6 +62,11 @@ class Settings(BaseSettings):
     # How much of the workspace diff review passes are shown. A review that
     # cannot see the code is an opinion about the plan, not about the work.
     review_diff_max_chars: int = 60000
+    # A run still marked running this long after starting is almost always a
+    # process that died rather than work in progress. Defaults to the Claude
+    # Code timeout, past which a pass cannot legitimately still be going.
+    stale_run_seconds: int = 1800
+    worker_heartbeat_seconds: int = 30
     # Reuse Claude Code sessions across passes so the repository is not
     # re-explored from cold each time. Off by default: the benefit is real but
     # unmeasured, and a reused session carries prior context into a later pass.

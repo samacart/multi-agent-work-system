@@ -20,6 +20,36 @@ export type AgentProfile = {
   updated_at: string
 }
 
+export type AttentionItem = {
+  kind:
+    | 'degraded_dependency'
+    | 'approval'
+    | 'failed_run'
+    | 'stale_run'
+    | 'blocked_task'
+    | 'open_question'
+    | 'config_warning'
+    | string
+  title: string
+  why: string
+  project_id: string | null
+  project_name: string | null
+  blast_radius: number
+  risk: 'low' | 'medium' | 'high' | string
+  age_seconds: number
+  link: string
+  action_id: string | null
+  score: number
+  components: Record<string, number>
+}
+
+export type Attention = {
+  count: number
+  needs_you: boolean
+  weights: Record<string, unknown>
+  items: AttentionItem[]
+}
+
 export type SystemSummary = {
   phase: number
   phase_name: string
@@ -352,6 +382,7 @@ export const api = {
   readiness: () => request<Readiness>('/health/ready', { okStatuses: [503] }),
   agentProfiles: () => request<AgentProfile[]>('/agent-profiles'),
   systemSummary: () => request<SystemSummary>('/system/summary'),
+  attention: () => request<Attention>('/attention'),
 
   topics: () => request<Topic[]>('/topics'),
   topic: (id: string) => request<TopicDetail>(`/topics/${id}`),

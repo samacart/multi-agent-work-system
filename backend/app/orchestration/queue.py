@@ -17,6 +17,7 @@ import redis.asyncio as redis
 from app.config import get_settings
 
 QUEUE_KEY = "maws:jobs"
+HEARTBEAT_KEY = "maws:worker:heartbeat"
 
 
 @dataclass(frozen=True)
@@ -76,3 +77,19 @@ async def dequeue(timeout: int = 5) -> Job | None:
 
 async def queue_depth() -> int:
     return int(await get_redis().llen(QUEUE_KEY))
+
+
+async def beat(ttl_seconds: int) -> None:
+    """Record that the worker is alive.
+
+    The key expires, so a worker that dies stops being alive rather than
+    leaving a stale claim behind. A queued job with no worker to consume it is
+    invisible otherwise: it looked exactly like a run in progress for an hour.
+    """
+    import time
+
+    await get_redis().set(HEARTBEAT_KEY, str(time.time()), ex=ttl_seconds)
+
+
+async def worker_alive() -> bool:
+    return await get_redis().exists(HEARTBEAT_KEY) == 1

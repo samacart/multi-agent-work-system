@@ -1,4 +1,5 @@
 import { api } from '../lib/api'
+import Attention from './Attention'
 import { usePolled } from '../lib/usePolled'
 
 export default function SystemOverview() {
@@ -10,6 +11,9 @@ export default function SystemOverview() {
 
   return (
     <section>
+      {/* Triage first: the counters are context, not the question. */}
+      <Attention />
+
       <h2>System</h2>
       <dl className="kv">
         <dt>Phase</dt>

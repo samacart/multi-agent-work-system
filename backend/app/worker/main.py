@@ -17,7 +17,7 @@ from sqlalchemy import text
 
 from app.config import get_settings
 from app.db.session import dispose_engine, get_sessionmaker
-from app.orchestration.queue import Job, close_redis, dequeue
+from app.orchestration.queue import Job, beat, close_redis, dequeue
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
 log = logging.getLogger("worker")
@@ -71,8 +71,12 @@ class Worker:
     async def run(self) -> None:
         settings = get_settings()
         log.info("worker starting (env=%s, runtime=%s)", settings.app_env, settings.agent_runtime)
+        heartbeat_ttl = settings.worker_heartbeat_seconds * 3
         while not self._stopping.is_set():
             try:
+                # Before dequeuing, so a worker blocked on an empty queue still
+                # reports alive.
+                await beat(heartbeat_ttl)
                 job = await dequeue(timeout=5)
             except Exception:  # noqa: BLE001 - keep the loop alive on transient Redis errors
                 log.exception("dequeue failed; retrying in 2s")
