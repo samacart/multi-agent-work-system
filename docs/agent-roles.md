@@ -18,10 +18,12 @@ a duplicate.
 
 Each profile carries:
 
-- `system_prompt` — the role instruction, verbatim from the brief.
-- `allowed_tools_json` — intended blast radius. Still advisory: no runtime
-  enforces it per tool call yet. The SDLC loop gates at role granularity
-  instead, see [operating-model.md](operating-model.md).
+- `system_prompt` — how the role works, what it refuses, how it behaves when it
+  disagrees with another role, and what done means in its own terms.
+- `allowed_tools_json` — what the role may actually do. **Enforced**, not
+  documentation: `backend/app/agents/permissions.py` turns these capabilities
+  into the tool flags the role's runtime is invoked with. Only `developer` and
+  `qa` can edit a repository; only `developer` and `release_manager` can commit.
 - `approval_rules_json` — `auto_approved` and `requires_approval` action lists,
   see [operating-model.md](operating-model.md).
 

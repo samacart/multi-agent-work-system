@@ -71,8 +71,16 @@ and release roles do not run. Their tasks are marked `blocked` and anything
 depending on them is skipped, with the reason recorded in the run notes and the
 final summary. Answering the gate and re-running picks up where it stopped.
 
-Per-action gating - blocking at the moment a runtime calls a specific tool -
-needs a runtime that calls tools, and arrives in Phase 6.
+Below that, each role is constrained to the capabilities its profile grants
+(`backend/app/agents/permissions.py`). Enforcement is by denial rather than by
+allowance: `--allowedTools` means "pre-approved without prompting", not "only
+these", so a role's permissions are expressed as the complement of what it was
+granted, with a global deny list folded in last. A profile grants; it never
+overrides.
+
+What does not exist yet is a gate at the moment of a specific tool call - the
+runtime cannot pause mid-pass and ask. Permissions are decided before the pass
+starts and hold for its duration.
 
 ## Verification
 
