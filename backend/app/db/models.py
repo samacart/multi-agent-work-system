@@ -162,6 +162,10 @@ class Project(Base):
     goal: Mapped[str | None] = mapped_column(sa.Text())
     status: Mapped[str] = mapped_column(enum_column("project_status", PROJECT_STATUSES), default="draft", nullable=False)
     brief: Mapped[str | None] = mapped_column(sa.Text())
+    # The repository this project's agents work in. Global config forced a
+    # server restart to point agents at a different directory, so two projects
+    # could never target two repositories.
+    workspace_path: Mapped[str | None] = mapped_column(sa.Text())
     created_at: Mapped[datetime] = created_column()
     updated_at: Mapped[datetime] = updated_column()
 
