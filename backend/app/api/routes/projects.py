@@ -10,6 +10,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.schemas import (
     AgentRunOut,
+    BlockerOut,
+    CriterionOut,
+    EvidenceEntry,
     ApprovalOut,
     ApprovalResponse,
     ArtifactOut,
@@ -41,7 +44,8 @@ from app.orchestration.queue import enqueue
 from app.orchestration.sdlc import SdlcError, run_project
 from app.orchestration.workspace import validate_workspace, workspace_for
 from app.projects.planning import PlanningError, plan_project
-from app.projects.tasks import InvalidTransition, check_transition
+from app.orchestration.sdlc import merge_evidence
+from app.projects.tasks import ALLOWED_TRANSITIONS, InvalidTransition, check_transition
 
 router = APIRouter(tags=["projects"])
 
@@ -408,3 +412,133 @@ async def answer_decision(
         return await answer_question(session, decision_id, payload.answer, payload.decided_by, payload.rationale)
     except LookupError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+# --- verification: criteria, evidence, and why work is blocked ---
+
+
+def _verdicts(task: Task) -> dict[str, dict]:
+    return {e["criterion"]: e for e in (task.evidence or []) if isinstance(e, dict) and e.get("criterion")}
+
+
+@router.get("/projects/{project_id}/criteria", response_model=list[CriterionOut])
+async def list_criteria(
+    project_id: uuid.UUID,
+    verdict: str | None = Query(default=None, description="met | not_met | unverified"),
+    session: AsyncSession = Depends(get_session),
+) -> list[CriterionOut]:
+    """Every acceptance criterion in the project with its verdict.
+
+    Criteria, not tasks, are what actually control promotion, so verification
+    work is batched at that level rather than reassembled per card.
+    """
+    await _get_project_or_404(session, project_id)
+    tasks = list(
+        (await session.scalars(select(Task).where(Task.project_id == project_id).order_by(Task.created_at))).all()
+    )
+
+    out: list[CriterionOut] = []
+    for task in tasks:
+        found = _verdicts(task)
+        for criterion in task.acceptance_criteria:
+            entry = found.get(criterion, {})
+            row = CriterionOut(
+                task_id=task.id,
+                task_title=task.title,
+                task_status=task.status,
+                agent_role=task.agent_role,
+                criterion=criterion,
+                verdict=entry.get("verdict", "unverified"),
+                evidence=entry.get("evidence", ""),
+                attributed_to=entry.get("attributed_to"),
+                rationale=entry.get("rationale"),
+            )
+            if verdict is None or row.verdict == verdict:
+                out.append(row)
+    return out
+
+
+@router.patch("/tasks/{task_id}/evidence", response_model=TaskOut)
+async def attach_evidence(
+    task_id: uuid.UUID, payload: EvidenceEntry, session: AsyncSession = Depends(get_session)
+) -> Task:
+    """Attach or amend the evidence for one criterion.
+
+    A human can unblock a task the automated agent could not verify. It goes
+    through the same merge and the same promotion rule as agent evidence -
+    two rules would be two chances to disagree - but who said so is recorded.
+    """
+    task = await session.get(Task, task_id)
+    if task is None:
+        raise HTTPException(status_code=404, detail="Task not found")
+    if payload.verdict not in {"met", "not_met", "unverified"}:
+        raise HTTPException(status_code=422, detail="verdict must be met, not_met, or unverified")
+    if payload.criterion not in task.acceptance_criteria:
+        raise HTTPException(
+            status_code=422,
+            detail=f"{payload.criterion!r} is not an acceptance criterion of this task",
+        )
+    if payload.verdict == "met" and not payload.evidence.strip():
+        # The whole point of the model is that "met" is a claim with backing.
+        raise HTTPException(status_code=422, detail="Evidence is required to mark a criterion met")
+
+    merge_evidence(task, payload.model_dump(mode="json"))
+    await session.commit()
+    return task
+
+
+@router.get("/tasks/{task_id}/blockers", response_model=BlockerOut)
+async def task_blockers(task_id: uuid.UUID, session: AsyncSession = Depends(get_session)) -> BlockerOut:
+    """What is actually holding this task, as something addressable.
+
+    The reason existed only as prose in a run note, so "blocked" named no cause
+    a person could act on.
+    """
+    task = await session.get(Task, task_id)
+    if task is None:
+        raise HTTPException(status_code=404, detail="Task not found")
+
+    metadata = task.metadata_json or {}
+    blocked_by = metadata.get("blocked_by") or {}
+
+    approvals: list[ApprovalRequest] = []
+    ids = [uuid.UUID(a) for a in blocked_by.get("approvals", []) if a]
+    if ids:
+        approvals = list((await session.scalars(select(ApprovalRequest).where(ApprovalRequest.id.in_(ids)))).all())
+    elif task.status == "blocked":
+        # Fall back to whatever is pending now: a gate answered since the run
+        # should not still read as the blocker.
+        approvals = list(
+            (
+                await session.scalars(
+                    select(ApprovalRequest).where(
+                        ApprovalRequest.project_id == task.project_id,
+                        ApprovalRequest.status == "pending",
+                    )
+                )
+            ).all()
+        )
+
+    found = _verdicts(task)
+    unmet = [c for c in task.acceptance_criteria if found.get(c, {}).get("verdict") != "met"]
+
+    run_id = blocked_by.get("run")
+    return BlockerOut(
+        task_id=task.id,
+        status=task.status,
+        reason=metadata.get("blocked_reason"),
+        approvals=[ApprovalOut.model_validate(a) for a in approvals if a.status == "pending"],
+        dependencies=list(blocked_by.get("dependencies") or metadata.get("depends_on") or []),
+        failed_run_id=uuid.UUID(run_id) if run_id else None,
+        unmet_criteria=unmet,
+    )
+
+
+@router.get("/tasks/transitions")
+async def task_transitions() -> dict:
+    """The legal moves, so the UI can offer only those.
+
+    Served rather than duplicated in the client: a copy would drift from the
+    state machine and the operator would learn the rules from a 409.
+    """
+    return {status: sorted(nxt) for status, nxt in ALLOWED_TRANSITIONS.items()}

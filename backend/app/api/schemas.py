@@ -246,3 +246,40 @@ class DecisionOut(BaseModel):
     decided_by: str | None
     metadata_json: dict
     created_at: datetime
+
+
+class EvidenceEntry(BaseModel):
+    """Verification of one acceptance criterion.
+
+    `attributed_to` is not decoration. Evidence-based promotion is the system's
+    strongest property, and a human marking a criterion met is the obvious way
+    to erode it - so who said so travels with the claim.
+    """
+
+    criterion: str = Field(min_length=1)
+    verdict: str = Field(description="met | not_met | unverified")
+    evidence: str = ""
+    attributed_to: str = Field(default="human", description="human | agent")
+    rationale: str | None = None
+
+
+class CriterionOut(BaseModel):
+    task_id: uuid.UUID
+    task_title: str
+    task_status: str
+    agent_role: str | None
+    criterion: str
+    verdict: str
+    evidence: str
+    attributed_to: str | None
+    rationale: str | None = None
+
+
+class BlockerOut(BaseModel):
+    task_id: uuid.UUID
+    status: str
+    reason: str | None
+    approvals: list[ApprovalOut] = Field(default_factory=list)
+    dependencies: list[str] = Field(default_factory=list)
+    failed_run_id: uuid.UUID | None = None
+    unmet_criteria: list[str] = Field(default_factory=list)

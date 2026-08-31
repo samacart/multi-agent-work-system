@@ -128,7 +128,13 @@ code { color: var(--accent); }
 .badge-blocked { color: var(--bad); border-color: var(--bad); }
 
 .board { display: flex; gap: 8px; overflow-x: auto; padding-bottom: 8px; align-items: flex-start; }
-.column { min-width: 190px; flex: 1 1 190px; }
+/* Cards carry acceptance criteria now, so a 190px column made every one a
+   tall thin ribbon. Empty columns collapse rather than claiming equal width:
+   seven full-width columns overflow the viewport and push the populated one
+   off-screen, which is worse than the ribbon it replaced. */
+.column { min-width: 280px; flex: 1 1 280px; }
+.column-empty { min-width: 96px; flex: 0 0 96px; opacity: 0.55; }
+.column-empty .column-head { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .column-head {
   text-transform: uppercase;
   font-size: 11px;
@@ -151,7 +157,7 @@ code { color: var(--accent); }
   padding: 2px 4px;
   border-radius: 3px;
 }
-.criteria { color: var(--muted); font-size: 11px; margin: 4px 0; padding-left: 14px; }
+.criteria { color: var(--muted); font-size: 11px; margin: 6px 0; padding-left: 0; line-height: 1.45; }
 .criteria li { margin: 1px 0; }
 
 .actions { display: flex; gap: 10px; }
@@ -261,3 +267,14 @@ code { color: var(--accent); }
 .quiet { border: 1px solid var(--border); border-left: 2px solid var(--ok); border-radius: 3px; padding: 12px 14px; background: var(--panel); }
 .quiet p { margin: 4px 0 0; }
 .consequence { color: var(--bad); font-size: 11px; margin-top: 2px; }
+
+/* --- criteria and blockers --- */
+.crit { list-style: none; margin: 6px 0; padding-left: 15px; position: relative; }
+.crit-mark { position: absolute; left: 0; }
+.crit-met .crit-mark { color: var(--ok); }
+.crit-not_met .crit-mark { color: var(--bad); }
+.crit-unverified .crit-mark { color: var(--muted); }
+.crit-evidence { color: var(--muted); font-size: 11px; margin-top: 1px; }
+.crit-human { color: var(--accent); }
+.blocker { border-left: 2px solid var(--bad); padding-left: 8px; margin-top: 6px; font-size: 11px; color: var(--muted); }
+.dropped { border-left: 2px solid var(--muted); padding-left: 8px; margin-top: 6px; font-size: 11px; color: var(--muted); }

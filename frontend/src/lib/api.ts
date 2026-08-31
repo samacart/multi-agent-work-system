@@ -220,10 +220,44 @@ export type Task = {
   agent_role: string | null
   status: TaskStatus
   acceptance_criteria: string[]
-  evidence: unknown[]
-  metadata_json: { depends_on?: string[] } & Record<string, unknown>
+  evidence: EvidenceEntry[]
+  metadata_json: {
+    depends_on?: string[]
+    blocked_reason?: string
+    dropped_from_plan?: string
+  } & Record<string, unknown>
   created_at: string
   updated_at: string
+}
+
+export type EvidenceEntry = {
+  criterion: string
+  verdict: 'met' | 'not_met' | 'unverified' | string
+  evidence: string
+  attributed_to?: string
+  rationale?: string | null
+}
+
+export type Criterion = {
+  task_id: string
+  task_title: string
+  task_status: string
+  agent_role: string | null
+  criterion: string
+  verdict: string
+  evidence: string
+  attributed_to: string | null
+  rationale: string | null
+}
+
+export type Blockers = {
+  task_id: string
+  status: string
+  reason: string | null
+  approvals: Approval[]
+  dependencies: string[]
+  failed_run_id: string | null
+  unmet_criteria: string[]
 }
 
 export type AgentRun = {
@@ -439,6 +473,12 @@ export const api = {
   tasks: (projectId: string) => request<Task[]>(`/projects/${projectId}/tasks`),
   updateTask: (taskId: string, patch: Partial<Pick<Task, 'status' | 'title' | 'description'>>) =>
     request<Task>(`/tasks/${taskId}`, { method: 'PATCH', body: patch }),
+  criteria: (projectId: string, verdict?: string) =>
+    request<Criterion[]>(`/projects/${projectId}/criteria${verdict ? `?verdict=${verdict}` : ''}`),
+  attachEvidence: (taskId: string, entry: EvidenceEntry) =>
+    request<Task>(`/tasks/${taskId}/evidence`, { method: 'PATCH', body: entry }),
+  blockers: (taskId: string) => request<Blockers>(`/tasks/${taskId}/blockers`),
+  transitions: () => request<Record<string, string[]>>('/tasks/transitions'),
 
   runs: (projectId: string) => request<AgentRun[]>(`/projects/${projectId}/runs`),
   artifacts: (projectId: string) => request<Artifact[]>(`/projects/${projectId}/artifacts`),

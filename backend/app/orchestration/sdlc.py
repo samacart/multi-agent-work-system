@@ -253,6 +253,11 @@ async def run_project(
             if any(title in blocked_titles for title in depends):
                 blocked_titles.add(task.title)
                 result.tasks_skipped += 1
+                task.metadata_json = {
+                    **(task.metadata_json or {}),
+                    "blocked_reason": "a task it depends on did not complete",
+                    "blocked_by": {"dependencies": [d for d in depends if d in blocked_titles]},
+                }
                 result.notes.append(f"Skipped '{task.title}': a task it depends on did not complete")
                 continue
 
@@ -260,6 +265,11 @@ async def run_project(
                 _advance(task, "blocked")
                 blocked_titles.add(task.title)
                 result.tasks_blocked += 1
+                task.metadata_json = {
+                    **(task.metadata_json or {}),
+                    "blocked_reason": f"{role} work needs the pending approval gate(s) answered first",
+                    "blocked_by": {"approvals": [str(a.id) for a in pending]},
+                }
                 result.notes.append(
                     f"Blocked '{task.title}': {role} work needs the pending approval gate(s) answered first"
                 )
@@ -305,6 +315,11 @@ async def run_project(
             if outcome.error is not None:
                 blocked_titles.add(task.title)
                 result.tasks_blocked += 1
+                task.metadata_json = {
+                    **(task.metadata_json or {}),
+                    "blocked_reason": f"agent run failed - {outcome.error}"[:500],
+                    "blocked_by": {"run": outcome.run_id or None},
+                }
                 result.notes.append(f"Blocked '{task.title}': agent run failed - {outcome.error}")
                 continue
 
@@ -529,8 +544,32 @@ Blocking: {"yes" if report.blocking else "no"}
     await upsert_artifact(session, project.id, artifact_type, f"{artifact_type} - {project.name}", content, task.id)
 
 
+def merge_evidence(task: Task, entry: dict) -> None:
+    """Replace this criterion's evidence on `task`, keeping the rest.
+
+    One path for agent and human evidence, so promotion cannot end up with two
+    rules. Attribution lives in the entry, not in a separate mechanism.
+    """
+    criterion = entry.get("criterion")
+    existing = [e for e in (task.evidence or []) if e.get("criterion") != criterion]
+    task.evidence = [*existing, entry]
+
+
 async def _attach_evidence(session: AsyncSession, tasks: list[Task], report: TestReport) -> None:
-    """Route each evidence entry back to the tasks that own that criterion."""
+    """Route each evidence entry back to the tasks that own that criterion.
+
+    Rows are reloaded first: merging onto objects loaded earlier in the run
+    would write the whole evidence list from a stale copy and silently discard
+    anything attached since - a human verifying a criterion mid-run, for
+    instance.
+    """
+    if tasks:
+        await session.execute(
+            select(Task)
+            .where(Task.id.in_([t.id for t in tasks]))
+            .execution_options(populate_existing=True)
+        )
+
     by_criterion: dict[str, list[Task]] = {}
     for task in tasks:
         for criterion in task.acceptance_criteria:
@@ -538,8 +577,7 @@ async def _attach_evidence(session: AsyncSession, tasks: list[Task], report: Tes
 
     for entry in report.evidence:
         for task in by_criterion.get(entry.criterion, []):
-            existing = [e for e in (task.evidence or []) if e.get("criterion") != entry.criterion]
-            task.evidence = [*existing, entry.model_dump(mode="json")]
+            merge_evidence(task, {**entry.model_dump(mode="json"), "attributed_to": "agent"})
     await session.commit()
 
 
